@@ -2,4 +2,5 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-05-13-mdp01-layer2-compliance-workitem.md](2026-05-13-mdp01-layer2-compliance-workitem.md) | 2026-05-13 | Layer 2: the compliance officer's inbox — hexagonal architecture, @DefaultBean CDI wiring, 30-day FinCEN SLA |
 | [2026-05-10-mdp01-aml-first-code-layer-1.md](2026-05-10-mdp01-aml-first-code-layer-1.md) | 2026-05-10 | Layer 1 baseline: the anti-pattern, two integration surprises, and the scaffold that holds it |
