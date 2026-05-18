@@ -1,5 +1,5 @@
-# Handoff — casehub-aml Layer 2 Complete
-2026-05-13
+# Handoff — casehub-aml Layer 3 Complete
+2026-05-18
 
 ## What this project is
 
@@ -7,46 +7,47 @@
 
 ## Current state
 
-Layers 1 and 2 are complete and pushed to `origin` (`casehubio/aml`).
+**Epic branch:** `epic-layer3-qhorus` (both project repo and workspace)
 
-**Layer 2 additions (on top of Layer 1):**
-- `api/domain/AmlInvestigationResult.java` — pure record: `InvestigationSummary summary` + `String complianceReviewTaskId`
-- `app/AmlInvestigationApplicationService.java` — use-case port interface
-- `app/tutorial/NaiveAmlInvestigationService.java` — `@ApplicationScoped @DefaultBean`, returns result with null taskId
-- `app/tutorial/WorkItemAmlInvestigationService.java` — `@ApplicationScoped`, delegates investigation to naive service, creates compliance WorkItem with `claimDeadline=now+30d`, `candidateGroups=compliance-officers`
-- `AmlInvestigationResource` — injects interface, returns `AmlInvestigationResult`
-- Hibernate scan packages: `io.casehub.work.runtime.filter` added alongside `runtime.model`
-- 8 tests passing (4 unit + 4 `@QuarkusTest`)
+Layers 1, 2, and 3 are complete. Layer 3 shipped this session.
 
-**Architecture decision made this session:** hexagonal architecture — `api/` is pure domain (no external deps), `app/` owns use-case orchestration. Protocol PP-20260512-9b8847 raised to parent#18.
+**Layer 3 additions:**
+- `SpecialistOutcome<T>` — sealed interface (Completed/Declined/Failed) in `api/`; `InvestigationSummary` and `SarDraftingService` updated to use it for all three specialists
+- `AmlInvestigator` — inner interface separating investigation from compliance lifecycle
+- `ComplianceReviewLifecycle` — WorkItem concern extracted from deleted `WorkItemAmlInvestigationService`
+- `AmlInvestigationCoordinator` — stable outer coordinator; replaces Layer 2's service
+- `QhorusAmlInvestigator` — sends COMMAND/DONE/DECLINE to qhorus; dispatches in-process to stub agent behaviours
+- `AgentBehaviour`/`AgentDispatchMechanism` SPIs + three stub behaviours; `OsintScreeningBehaviour` always DECLINEs
+- `AmlJacksonConfig` — `ObjectMapperCustomizer` mixin adds `"type"` discriminator to `SpecialistOutcome<T>` JSON
+- 19 tests passing (`@QuarkusTest` starts cleanly after CDI fixes)
+
+**Key CDI fixes applied this session:**
+- `casehub.qhorus.reactive.enabled=false` removed — upstream bug resolved
+- `LedgerVerificationService` chain excluded from test CDI via `quarkus.arc.exclude-types`
+- `@Typed({AgentDispatchMechanism.class, PushAgentDispatch.class})` prevents ambiguity with `QhorusChannelBackend`
 
 ## Open issues to watch
 
-| Issue | Repo | What |
-|-------|------|------|
-| #13 | casehubio/aml | Remove test workarounds (qhorus reactive + Flyway V2) when upstream fixed |
-| #14 | casehubio/aml | Foundation blockers tracker — Layers 6 and 8 await engine P1.3 and LlmPlanningStrategy SPI |
-| #16 | casehubio/aml | `GET /workitems/{id}` assertion missing from resource test (deferred spec deviation) |
-| #17 | casehubio/aml | `@Transactional` on `investigate()` — evaluate at Layer 3 |
-| #15 | casehubio/parent | Update casehub-aml.md (updated with Layer 2 state) |
-| #18 | casehubio/parent | Add hexagonal application-service placement protocol (PP-20260512-9b8847) |
-| #19 | casehubio/parent | Add casehub-work Hibernate scan package protocol |
-| #168 | casehubio/work | Builder for `WorkItemCreateRequest` (19-field positional record) |
-
-## Known workarounds
-
-*Unchanged — `git show HEAD~1:HANDOFF.md` §Known workarounds*
+| Issue | What |
+|-------|------|
+| #22 | `channelGateway.fanOut()` not triggering `PushAgentDispatch.post()` — root cause unknown |
+| #23 | Verify qhorus COMMAND/DONE/DECLINE messages persisted in `@QuarkusTest` |
+| #24 | Minor Layer 3 code quality items |
+| #13 | Flyway V2 conflict workaround still in test config (reactive part resolved; Flyway part remains) |
+| #18 | Meta: agentic harness framing — CLAUDE.md update still pending |
 
 ## What to build next
 
-**Layer 3** — add `casehub-qhorus`: typed `COMMAND/RESPONSE/DONE/DECLINE` per specialist agent. Closes the "no formal obligation per investigation task" gap. Epic: casehubio/aml#9.
+**Close the epic** — `epic-layer3-qhorus` is ready to close. LAYER-LOG.md Layer 3 entry is written, blog entry committed, docs synced.
 
-Before starting: check for an active child issue under Epic #9 for Layer 3. If none, run issue-workflow Phase 1.
+**Then: Layer 4** — add `casehub-ledger` as the explicit FinCEN audit trail. The ledger is already on the classpath (transitively via qhorus). Layer 4's teaching point is demonstrating what's already being written to the Merkle chain. Before starting: investigate #22 (fan-out) — Layer 4 will want qhorus message ledger entries to be part of the story.
+
+Before starting Layer 4: check for an active child issue under Epic #9. If none, run issue-workflow Phase 1.
 
 ## References
 
-- Spec: `specs/2026-05-13-layer2-casehub-work-design.md`
-- Plan: `plans/2026-05-13-layer2-casehub-work.md`
-- Blog: `blog/2026-05-13-mdp01-layer2-compliance-workitem.md`
-- Garden: `GE-20260513-74dc72` (FilterRule scan package), `GE-20260513-4f26a7` (@DefaultBean layer displacement)
-- Foundation status: *Unchanged — `git show HEAD~1:HANDOFF.md` §Foundation status*
+- Design spec: `specs/2026-05-17-layer3-composer-qhorus-design.md`
+- Blog (architectural investigation): `blog/2026-05-16-mdp01-broken-promise-layer-2.md`
+- Blog (implementation): `blog/2026-05-18-mdp01-layer3-five-surprises.md`
+- LAYER-LOG.md: Layer 3 entry written (full wiring, all 5 CDI gotchas documented)
+- Epic branch: `epic-layer3-qhorus` on both repos
