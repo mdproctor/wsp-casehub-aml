@@ -1,53 +1,39 @@
-# Handoff — casehub-aml Layer 3 Complete
-2026-05-18
+# Handoff — casehub-aml post-epic-close
+2026-05-19
 
 ## What this project is
 
-*Unchanged — `git show HEAD~1:HANDOFF.md`*
+*Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
 ## Current state
 
-**Epic branch:** `epic-layer3-qhorus` (both project repo and workspace)
+**Epic branch:** `epic-layer3-qhorus` (both repos — EPIC-CLOSED.md written, deletion due 2026-06-01)
+**Project main:** fully merged — all Layer 3 code, specs promoted to `docs/specs/`, DESIGN.md created
 
-Layers 1, 2, and 3 are complete. Layer 3 shipped this session.
+Layers 1, 2, and 3 complete. Epic closed this session.
 
-**Layer 3 additions:**
-- `SpecialistOutcome<T>` — sealed interface (Completed/Declined/Failed) in `api/`; `InvestigationSummary` and `SarDraftingService` updated to use it for all three specialists
-- `AmlInvestigator` — inner interface separating investigation from compliance lifecycle
-- `ComplianceReviewLifecycle` — WorkItem concern extracted from deleted `WorkItemAmlInvestigationService`
-- `AmlInvestigationCoordinator` — stable outer coordinator; replaces Layer 2's service
-- `QhorusAmlInvestigator` — sends COMMAND/DONE/DECLINE to qhorus; dispatches in-process to stub agent behaviours
-- `AgentBehaviour`/`AgentDispatchMechanism` SPIs + three stub behaviours; `OsintScreeningBehaviour` always DECLINEs
-- `AmlJacksonConfig` — `ObjectMapperCustomizer` mixin adds `"type"` discriminator to `SpecialistOutcome<T>` JSON
-- 19 tests passing (`@QuarkusTest` starts cleanly after CDI fixes)
+**Also done this session:**
+- Agentic harness framing corrected in parent (11 files) — CaseHub foundation is the harness; domain apps build on it. aml CLAUDE.md updated to match.
+- Protocol PP-20260519-0692ff: JOURNAL.md entries need `§SectionName` anchor in header or they're silently skipped at epic close merge
+- Garden GE-20260519-c93fd8: `git add -A` after `git checkout <branch> -- <files>` sweeps all untracked files, not just checked-out ones
 
-**Key CDI fixes applied this session:**
-- `casehub.qhorus.reactive.enabled=false` removed — upstream bug resolved
-- `LedgerVerificationService` chain excluded from test CDI via `quarkus.arc.exclude-types`
-- `@Typed({AgentDispatchMechanism.class, PushAgentDispatch.class})` prevents ambiguity with `QhorusChannelBackend`
+## Open issues
 
-## Open issues to watch
-
-| Issue | What |
-|-------|------|
-| #22 | `channelGateway.fanOut()` not triggering `PushAgentDispatch.post()` — root cause unknown |
-| #23 | Verify qhorus COMMAND/DONE/DECLINE messages persisted in `@QuarkusTest` |
-| #24 | Minor Layer 3 code quality items |
-| #13 | Flyway V2 conflict workaround still in test config (reactive part resolved; Flyway part remains) |
-| #18 | Meta: agentic harness framing — CLAUDE.md update still pending |
+| Issue | What | Status |
+|-------|------|--------|
+| #13 | Remove test workarounds — Flyway V2 conflict + qhorus reactive suppression | **do next** |
+| #22 | fanOut() not triggering PushAgentDispatch.post() | **skip** — qhorus/claudony refactoring in progress; fan-out API may change |
+| #24 | Minor Layer 3 code quality | low priority |
 
 ## What to build next
 
-**Close the epic** — `epic-layer3-qhorus` is ready to close. LAYER-LOG.md Layer 3 entry is written, blog entry committed, docs synced.
+**#13 first** — quick win. Check whether casehubio/qhorus#141, #142 and casehubio/work#162 are resolved, then remove the workaround properties from `app/src/test/resources/application.properties` and verify `mvn verify -pl app -am` passes.
 
-**Then: Layer 4** — add `casehub-ledger` as the explicit FinCEN audit trail. The ledger is already on the classpath (transitively via qhorus). Layer 4's teaching point is demonstrating what's already being written to the Merkle chain. Before starting: investigate #22 (fan-out) — Layer 4 will want qhorus message ledger entries to be part of the story.
-
-Before starting Layer 4: check for an active child issue under Epic #9. If none, run issue-workflow Phase 1.
+**Then Layer 4** — add casehub-ledger as the explicit FinCEN audit trail. Before starting: check for a child issue under Epic #9; create one if absent (issue-workflow Phase 1).
 
 ## References
 
-- Design spec: `specs/2026-05-17-layer3-composer-qhorus-design.md`
-- Blog (architectural investigation): `blog/2026-05-16-mdp01-broken-promise-layer-2.md`
-- Blog (implementation): `blog/2026-05-18-mdp01-layer3-five-surprises.md`
-- LAYER-LOG.md: Layer 3 entry written (full wiring, all 5 CDI gotchas documented)
-- Epic branch: `epic-layer3-qhorus` on both repos
+- Blog: `blog/2026-05-19-mdp01-naming-the-harness.md`
+- DESIGN.md: `DESIGN.md` (workspace) — §Architecture
+- Protocol: `docs/protocols/casehub/journal-section-anchor.md`
+- Epic marker: `EPIC-CLOSED.md` on workspace epic branch

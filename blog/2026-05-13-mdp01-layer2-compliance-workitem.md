@@ -6,6 +6,7 @@ type: phase-update
 entry_type: note
 subtype: diary
 projects: [casehub-aml]
+excerpt: "Layer 2 of casehub-aml wires in casehub-work for compliance officer task routing — settling the hexagonal architecture question of where orchestration belongs and using @DefaultBean to make the richer implementation win automatically."
 ---
 
 The core of Layer 2 isn't the code — it's the architectural question that gets settled first. `api/` and `app/` are the two Maven modules. When `casehub-work` enters as a dependency, where does the orchestration interface live?

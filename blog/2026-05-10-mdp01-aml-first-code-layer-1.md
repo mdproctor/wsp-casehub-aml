@@ -7,6 +7,7 @@ entry_type: note
 subtype: diary
 projects: [casehub-aml]
 tags: [aml, quarkus, tutorial, casehub]
+excerpt: "The first real code in casehub-aml is intentionally wrong — a naive sequential baseline that makes every missing capability visible before CaseHub layers are introduced to close the gaps."
 ---
 
 The first real code in casehub-aml is, by design, wrong.
