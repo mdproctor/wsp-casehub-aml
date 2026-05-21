@@ -1,39 +1,35 @@
-# Handoff — casehub-aml post-epic-close
-2026-05-19
+# Handoff — casehub-aml Flyway re-enabled
+2026-05-21
 
 ## What this project is
 
-*Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
+*Unchanged — `git show HEAD~5:HANDOFF.md` §What this project is*
 
 ## Current state
 
-**Epic branch:** `epic-layer3-qhorus` (both repos — EPIC-CLOSED.md written, deletion due 2026-06-01)
-**Project main:** fully merged — all Layer 3 code, specs promoted to `docs/specs/`, DESIGN.md created
+**Both repos on main.** All three issue branches closed (epic-layer3-qhorus, issue-13, issue-26).
 
-Layers 1, 2, and 3 complete. Epic closed this session.
-
-**Also done this session:**
-- Agentic harness framing corrected in parent (11 files) — CaseHub foundation is the harness; domain apps build on it. aml CLAUDE.md updated to match.
-- Protocol PP-20260519-0692ff: JOURNAL.md entries need `§SectionName` anchor in header or they're silently skipped at epic close merge
-- Garden GE-20260519-c93fd8: `git add -A` after `git checkout <branch> -- <files>` sweeps all untracked files, not just checked-out ones
+**Completed this session:**
+- Agentic harness framing corrected in 11 parent docs — CaseHub foundation is the harness, domain apps build on it
+- issue-13: reactive workarounds removed (ledger#92 fixed root cause)
+- issue-26: Flyway re-enabled on both datasources after three upstream fixes (qhorus#174, ledger#95, qhorus#180)
+- Flyway locations pinned explicitly in test and main config; `quarkus-test-database.md` protocol updated
+- WorkItemCreateRequest adapted to Builder pattern (issue #27, casehub-work SNAPSHOT)
+- All 5 blog entries published to mdproctor.github.io
 
 ## Open issues
 
 | Issue | What | Status |
 |-------|------|--------|
-| #13 | Remove test workarounds — Flyway V2 conflict + qhorus reactive suppression | **do next** |
-| #22 | fanOut() not triggering PushAgentDispatch.post() | **skip** — qhorus/claudony refactoring in progress; fan-out API may change |
+| #22 | fanOut() not triggering PushAgentDispatch.post() | skip — qhorus/claudony refactoring in progress |
 | #24 | Minor Layer 3 code quality | low priority |
 
 ## What to build next
 
-**#13 first** — quick win. Check whether casehubio/qhorus#141, #142 and casehubio/work#162 are resolved, then remove the workaround properties from `app/src/test/resources/application.properties` and verify `mvn verify -pl app -am` passes.
-
-**Then Layer 4** — add casehub-ledger as the explicit FinCEN audit trail. Before starting: check for a child issue under Epic #9; create one if absent (issue-workflow Phase 1).
+**Layer 4** — add casehub-ledger as the explicit FinCEN audit trail. Ledger is already on the classpath (transitively via qhorus). Before starting: check for a child issue under Epic #9; create one if absent (issue-workflow Phase 1). Flyway is now running real migrations — Layer 4 ledger entries will land correctly in tests.
 
 ## References
 
-- Blog: `blog/2026-05-19-mdp01-naming-the-harness.md`
-- DESIGN.md: `DESIGN.md` (workspace) — §Architecture
-- Protocol: `docs/protocols/casehub/journal-section-anchor.md`
-- Epic marker: `EPIC-CLOSED.md` on workspace epic branch
+- Blog: `blog/2026-05-21-mdp01-what-flyway-was-hiding.md`
+- DESIGN.md: `DESIGN.md` (workspace) — §Architecture (Layer 3 + Flyway locations pinning)
+- Branch deletion due: epic-layer3-qhorus 2026-06-01, issue-13 2026-06-03, issue-26 2026-06-04
