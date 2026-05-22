@@ -1,35 +1,39 @@
-# Handoff — casehub-aml Flyway re-enabled
-2026-05-21
+# Handoff — casehub-aml Layer 3 test coverage parity
+2026-05-22
 
 ## What this project is
 
-*Unchanged — `git show HEAD~5:HANDOFF.md` §What this project is*
+*Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
 ## Current state
 
-**Both repos on main.** All three issue branches closed (epic-layer3-qhorus, issue-13, issue-26).
+**Both repos on main.** issue-24 closed and merged.
 
 **Completed this session:**
-- Agentic harness framing corrected in 11 parent docs — CaseHub foundation is the harness, domain apps build on it
-- issue-13: reactive workarounds removed (ledger#92 fixed root cause)
-- issue-26: Flyway re-enabled on both datasources after three upstream fixes (qhorus#174, ledger#95, qhorus#180)
-- Flyway locations pinned explicitly in test and main config; `quarkus-test-database.md` protocol updated
-- WorkItemCreateRequest adapted to Builder pattern (issue #27, casehub-work SNAPSHOT)
-- All 5 blog entries published to mdproctor.github.io
+- issue-24: SpecialistOutcome test coverage parity — all 9 combinations (3 variants × 3
+  specialists) now tested in NaiveSarDraftingServiceTest
+- NaiveAmlInvestigationServiceTest: sarNarrative now asserts transaction ID flows through
+- Stale branches deleted (epic-layer3-qhorus, issue-13, issue-26 — remotes were already gone)
+- Pre-existing AmlInvestigationResourceTest failure tracked as #29 (NoClassDefFoundError:
+  ActorType — ledger-api not on @QuarkusTest classpath via qhorus transitive dep)
+- #28 filed: OSINT Declined/Failed fixtures should be promoted to class-level fields (minor)
 
 ## Open issues
 
 | Issue | What | Status |
 |-------|------|--------|
 | #22 | fanOut() not triggering PushAgentDispatch.post() | skip — qhorus/claudony refactoring in progress |
-| #24 | Minor Layer 3 code quality | low priority |
+| #28 | OSINT Declined/Failed fixtures → class-level fields | low priority |
+| #29 | AmlInvestigationResourceTest NoClassDefFoundError: ActorType | needs investigation |
 
 ## What to build next
 
-**Layer 4** — add casehub-ledger as the explicit FinCEN audit trail. Ledger is already on the classpath (transitively via qhorus). Before starting: check for a child issue under Epic #9; create one if absent (issue-workflow Phase 1). Flyway is now running real migrations — Layer 4 ledger entries will land correctly in tests.
+**Layer 4** — add casehub-ledger as the explicit FinCEN audit trail. Ledger is already on
+the classpath (transitively via qhorus). Before starting: check for a child issue under
+Epic #9; create one if absent (issue-workflow Phase 1). Flyway is running real migrations —
+Layer 4 ledger entries will land correctly in tests.
 
 ## References
 
-- Blog: `blog/2026-05-21-mdp01-what-flyway-was-hiding.md`
-- DESIGN.md: `DESIGN.md` (workspace) — §Architecture (Layer 3 + Flyway locations pinning)
-- Branch deletion due: epic-layer3-qhorus 2026-06-01, issue-13 2026-06-03, issue-26 2026-06-04
+- Blog: `blog/2026-05-22-mdp01-sealed-doesnt-mean-tested.md`
+- DESIGN.md: `DESIGN.md` (workspace) — §Architecture
