@@ -1,5 +1,5 @@
-# Handoff — casehub-aml Layer 3 test coverage parity
-2026-05-22
+# Handoff — casehub-aml Layer 4 complete
+2026-05-23
 
 ## What this project is
 
@@ -7,33 +7,40 @@
 
 ## Current state
 
-**Both repos on main.** issue-24 closed and merged.
+**Both repos on main.** issue-30-layer4-ledger-audit-trail closed and merged.
 
 **Completed this session:**
-- issue-24: SpecialistOutcome test coverage parity — all 9 combinations (3 variants × 3
-  specialists) now tested in NaiveSarDraftingServiceTest
-- NaiveAmlInvestigationServiceTest: sarNarrative now asserts transaction ID flows through
-- Stale branches deleted (epic-layer3-qhorus, issue-13, issue-26 — remotes were already gone)
-- Pre-existing AmlInvestigationResourceTest failure tracked as #29 (NoClassDefFoundError:
-  ActorType — ledger-api not on @QuarkusTest classpath via qhorus transitive dep)
-- #28 filed: OSINT Declined/Failed fixtures should be promoted to class-level fields (minor)
+- qhorus#184 shipped: `MessageDispatch` builder replacing `send()`, `DispatchResult` return type,
+  `subjectId`/`causedByEntryId` propagation, builder validation for all 9 message types.
+  Full design review (3 rounds), 104 test protocol-violation fixes, pushed to qhorus main.
+- AML Layer 4 (issue #30 closed): `AmlInvestigationLedgerEntry` JPA entity, `AmlLedgerService`,
+  V2001 Flyway migration, `AmlInvestigationResult.caseId`/`ledgerCaseEntryId`, `AmlInvestigator`
+  updated to accept `caseId`, `QhorusAmlInvestigator` migrated to `dispatch()` with subjectId.
+  30 tests pass.
+- ADR-0001 filed: caseId as fresh UUID per investigation (vs deterministic UUID from tx string)
+- 2 garden entries: stale qhorus snapshot → TABLE NOT FOUND, `@TestTransaction` + REQUIRED
+  write invisibility
+- All AML blog entries published to mdproctor.github.io
 
 ## Open issues
 
 | Issue | What | Status |
 |-------|------|--------|
-| #22 | fanOut() not triggering PushAgentDispatch.post() | skip — qhorus/claudony refactoring in progress |
-| #28 | OSINT Declined/Failed fixtures → class-level fields | low priority |
-| #29 | AmlInvestigationResourceTest NoClassDefFoundError: ActorType | needs investigation |
+| qhorus#190 | OutboundMessage needs inReplyTo + subjectId for PushAgentDispatch fan-out replies | open |
+| aml#22 | fanOut() not triggering PushAgentDispatch.post() | skip — qhorus refactoring ongoing |
+| casehub/parent#51 | casehub-aml.md Layer 4 status update | needs parent session |
+| casehub/parent#48 | casehub-qhorus.md MessageDispatch API docs | needs parent session |
 
 ## What to build next
 
-**Layer 4** — add casehub-ledger as the explicit FinCEN audit trail. Ledger is already on
-the classpath (transitively via qhorus). Before starting: check for a child issue under
-Epic #9; create one if absent (issue-workflow Phase 1). Flyway is running real migrations —
-Layer 4 ledger entries will land correctly in tests.
+**Layer 5** — add casehub-engine: adaptive investigation path (PEP routing, parallel
+specialist checks). Before starting: check for a child issue under Epic #9; create one
+if absent (issue-workflow Phase 1).
+
+Foundation gate: casehub-engine P0 (engine#186) is complete.
 
 ## References
 
-- Blog: `blog/2026-05-22-mdp01-sealed-doesnt-mean-tested.md`
-- DESIGN.md: `DESIGN.md` (workspace) — §Architecture
+- Blog: `blog/2026-05-23-mdp01-channel-ids-terrible-audit-keys.md`
+- ADR: `adr/0001-case-id-as-investigation-aggregate-identifier.md`
+- DESIGN.md: `DESIGN.md` — §AML domain ledger entries, §QhorusAmlInvestigator MessageDispatch API
