@@ -4,7 +4,7 @@ title: "Sealed Doesn't Mean Tested"
 date: 2026-05-22
 type: phase-update
 entry_type: note
-subtype: log
+subtype: diary
 projects: [casehub-aml]
 tags: [testing, java, sealed-interfaces, quarkus, casehub]
 ---

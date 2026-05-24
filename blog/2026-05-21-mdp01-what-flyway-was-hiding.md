@@ -4,7 +4,7 @@ title: "What Flyway Was Hiding"
 date: 2026-05-21
 type: phase-update
 entry_type: note
-subtype: log
+subtype: diary
 projects: [casehub-aml]
 tags: [flyway, quarkus, casehub, testing, migration]
 ---

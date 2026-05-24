@@ -1,5 +1,5 @@
-# Handoff — casehub-aml Layer 4 complete
-2026-05-23
+# Handoff — casehub-aml Layer 5 ready
+2026-05-24
 
 ## What this project is
 
@@ -7,20 +7,14 @@
 
 ## Current state
 
-**Both repos on main.** issue-30-layer4-ledger-audit-trail closed and merged.
+**Both repos on main.** Layer 5 confirmed unblocked this session.
 
 **Completed this session:**
-- qhorus#184 shipped: `MessageDispatch` builder replacing `send()`, `DispatchResult` return type,
-  `subjectId`/`causedByEntryId` propagation, builder validation for all 9 message types.
-  Full design review (3 rounds), 104 test protocol-violation fixes, pushed to qhorus main.
-- AML Layer 4 (issue #30 closed): `AmlInvestigationLedgerEntry` JPA entity, `AmlLedgerService`,
-  V2001 Flyway migration, `AmlInvestigationResult.caseId`/`ledgerCaseEntryId`, `AmlInvestigator`
-  updated to accept `caseId`, `QhorusAmlInvestigator` migrated to `dispatch()` with subjectId.
-  30 tests pass.
-- ADR-0001 filed: caseId as fresh UUID per investigation (vs deterministic UUID from tx string)
-- 2 garden entries: stale qhorus snapshot → TABLE NOT FOUND, `@TestTransaction` + REQUIRED
-  write invisibility
-- All AML blog entries published to mdproctor.github.io
+- parent#51 closed: casehub-aml.md updated — Layer 4 marked complete (2026-05-23),
+  Layer 5 corrected from `blocked: engine P1.3` to `engine P0 ✅ complete — unblocked`,
+  Layer 6 gate corrected to `engine#336, #337` (trust-weighted selection, genuinely open)
+- GE-20260524-c66b05: garden entry — tutorial layer blocking labels can silently
+  point at the wrong milestone
 
 ## Open issues
 
@@ -28,19 +22,16 @@
 |-------|------|--------|
 | qhorus#190 | OutboundMessage needs inReplyTo + subjectId for PushAgentDispatch fan-out replies | open |
 | aml#22 | fanOut() not triggering PushAgentDispatch.post() | skip — qhorus refactoring ongoing |
-| casehub/parent#51 | casehub-aml.md Layer 4 status update | needs parent session |
 | casehub/parent#48 | casehub-qhorus.md MessageDispatch API docs | needs parent session |
 
 ## What to build next
 
 **Layer 5** — add casehub-engine: adaptive investigation path (PEP routing, parallel
-specialist checks). Before starting: check for a child issue under Epic #9; create one
-if absent (issue-workflow Phase 1).
+specialist checks). Engine P0 (engine#186) is complete — unblocked.
 
-Foundation gate: casehub-engine P0 (engine#186) is complete.
+**Immediate next step:** check for a Layer 5 child issue under Epic #9 (`gh issue view 9 --repo casehubio/aml`). None existed at end of this session — create one via issue-workflow Phase 1 before writing any code.
 
 ## References
 
-- Blog: `blog/2026-05-23-mdp01-channel-ids-terrible-audit-keys.md`
+- Blog: `blog/2026-05-24-mdp01-layer-5-was-never-blocked.md`
 - ADR: `adr/0001-case-id-as-investigation-aggregate-identifier.md`
-- DESIGN.md: `DESIGN.md` — §AML domain ledger entries, §QhorusAmlInvestigator MessageDispatch API
