@@ -15,6 +15,8 @@
   Layer 6 gate corrected to `engine#336, #337` (trust-weighted selection, genuinely open)
 - GE-20260524-c66b05: garden entry — tutorial layer blocking labels can silently
   point at the wrong milestone
+- All 9 blog entries published to mdproctor.github.io
+- `epic-layer3-qhorus` marked closed with EPIC-CLOSED.md (issue #19, deletion due 2026-06-07) — predated the convention
 
 ## Open issues
 
