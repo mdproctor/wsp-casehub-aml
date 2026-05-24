@@ -2,6 +2,7 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-05-24-mdp01-layer-5-was-never-blocked.md](2026-05-24-mdp01-layer-5-was-never-blocked.md) | 2026-05-24 | Layer 5's blocking label pointed at the wrong engine milestone — it was never actually blocked |
 | [2026-05-22-mdp01-sealed-doesnt-mean-tested.md](2026-05-22-mdp01-sealed-doesnt-mean-tested.md) | 2026-05-22 | Sealed interface exhaustiveness in the implementation doesn't imply test exhaustiveness — six uncovered switch arms |
 | [2026-05-21-mdp01-what-flyway-was-hiding.md](2026-05-21-mdp01-what-flyway-was-hiding.md) | 2026-05-21 | Three upstream fixes to re-enable Flyway in tests — V1 conflict, V1003 collision, explicit locations pinning |
 | [2026-05-19-mdp01-naming-the-harness.md](2026-05-19-mdp01-naming-the-harness.md) | 2026-05-19 | Naming the harness — CaseHub foundation is the harness, domain apps build on it; fixed across 11 parent docs |
