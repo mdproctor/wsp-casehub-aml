@@ -3,6 +3,7 @@
 | File | Date | Title |
 |------|------|-------|
 | [2026-05-25-mdp01-parallel-by-default.md](2026-05-25-mdp01-parallel-by-default.md) | 2026-05-25 | Layer 5: YAML bindings + programmatic workers, parallel dispatch by default, UUID identity fix, WORKER_SCHEDULED metadata |
+| [2026-05-25-mdp02-misleading-jdbc-error.md](2026-05-25-mdp02-misleading-jdbc-error.md) | 2026-05-25 | Housekeeping: four pre-done issues closed, @Transactional XA failure on dual datasources, GET /workitems SLA assertion |
 | [2026-05-24-mdp01-layer-5-was-never-blocked.md](2026-05-24-mdp01-layer-5-was-never-blocked.md) | 2026-05-24 | Layer 5's blocking label pointed at the wrong engine milestone — it was never actually blocked |
 | [2026-05-22-mdp01-sealed-doesnt-mean-tested.md](2026-05-22-mdp01-sealed-doesnt-mean-tested.md) | 2026-05-22 | Sealed interface exhaustiveness in the implementation doesn't imply test exhaustiveness — six uncovered switch arms |
 | [2026-05-21-mdp01-what-flyway-was-hiding.md](2026-05-21-mdp01-what-flyway-was-hiding.md) | 2026-05-21 | Three upstream fixes to re-enable Flyway in tests — V1 conflict, V1003 collision, explicit locations pinning |
