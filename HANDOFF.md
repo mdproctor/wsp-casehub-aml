@@ -21,6 +21,11 @@
 - Parent issues filed: #65 (engine artifacts missing from BOM), #69 (casehub-aml.md Layer 5 status), #70 (PLATFORM.md cross-repo deps)
 - CLAUDE.md: Layer 4 ✅ and Layer 5 ✅ marked complete
 
+## Issues filed from casehub-life session (2026-05-26)
+
+- **aml#34** — add layer navigation index to LAYER-LOG.md: explicit `**Navigation:** git log --grep="#N"` line per layer entry so LLM sessions can jump directly to any layer boundary
+- **aml#35** — rename all `Naive*` classes (`NaiveAmlInvestigationService` → `AmlInvestigationService` etc.), dissolve `tutorial/` package (these are default implementations, not tutorial-only code), update LAYER-LOG.md terminology ("domain baseline" not "naive Java"), remove any `// LAYER N GAP:` comments from production code
+
 ## Open issues
 
 | Issue | What | Status |
