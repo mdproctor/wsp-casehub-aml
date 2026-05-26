@@ -5,9 +5,19 @@
 
 *Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
+## Parent session (2026-05-26)
+
+Branch `issue-16-23-28-22-aml-test-batch` created:
+- **aml#28** closed: already done (declinedOsint/failedOsint already class-level in DefaultSarDraftingServiceTest)
+- **aml#16** closed: already done (GET /workitems/{id} assertion already in AmlInvestigationResourceTest lines 49–61)
+- **aml#22** closed: fanOut() investigation complete — root cause is ChannelService.create() not registering channels in ChannelGateway.registry; in-process dispatch is correct for Layer 3
+- **aml#23** fixed (commit 8c1509e): `postInvestigation_persistsQhorusCommandAndReplyForEachSpecialist` added — verifies COMMAND+DONE for entity/pattern, COMMAND+DECLINE for osint
+
+**Open branch needs PR:** `issue-16-23-28-22-aml-test-batch`
+
 ## Current state
 
-**Both repos on main.** Layer 5 shipped this session. Layer 6 is next.
+**Project repo on branch `issue-16-23-28-22-aml-test-batch`.** Layer 5 shipped previously. Layer 6 is next.
 
 **Completed this session:**
 - casehubio/aml#31 closed: Layer 5 — adaptive investigation paths with casehub-engine
