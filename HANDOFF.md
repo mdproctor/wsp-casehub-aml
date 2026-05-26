@@ -28,9 +28,12 @@
 | qhorus#190 | OutboundMessage needs inReplyTo + subjectId for PushAgentDispatch fan-out replies | open |
 | aml#22 | fanOut() not triggering PushAgentDispatch.post() | skip — qhorus refactoring ongoing |
 | parent#48 | casehub-qhorus.md MessageDispatch API docs | needs parent session |
-| parent#65 | Add engine artifacts to BOM dependencyManagement | needs parent session |
-| parent#69 | casehub-aml.md: Layer 5 → complete | needs parent session |
-| parent#70 | PLATFORM.md: casehub-aml → casehub-engine cross-repo deps | needs parent session |
+| ~~parent#65~~ | ~~Add engine artifacts to BOM~~ | ✅ closed by parent session 2026-05-26 |
+| ~~parent#69~~ | ~~casehub-aml.md: Layer 5 → complete~~ | ✅ closed by parent session 2026-05-26 |
+| ~~parent#70~~ | ~~PLATFORM.md: casehub-aml → casehub-engine cross-repo deps~~ | ✅ closed by parent session 2026-05-26 |
+| ~~aml#20~~ | ~~Flyway conflict~~ | ✅ closed — conflict doesn't exist; real fix tracked in work#229 (db/work/migration rename) |
+| ~~aml#33~~ | ~~CI repository_dispatch trigger~~ | ✅ closed — trigger was already present |
+| ~~aml#18~~ | ~~Adopt agentic harness framing~~ | ✅ closed — framing and LAYER-LOG already in place |
 
 ## What to build next
 
