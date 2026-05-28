@@ -1,0 +1,8 @@
+branch: issue-38-layer6-trust-routing
+project-sha: 8c1509edd2c9e75f4958fdf1aeef970c5672833f
+date: 2026-05-28
+issue: 38
+issue-repo: casehubio/aml
+flyway-next-v: unknown
+design-repo: workspace
+design-section-hashes:
