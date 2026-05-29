@@ -1,68 +1,53 @@
-# Handoff — casehub-aml Layer 5 complete
-2026-05-25
+# Handoff — casehub-aml Layer 6 complete
+2026-05-29
 
 ## What this project is
 
 *Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
-## Parent session (2026-05-26)
+## This session (2026-05-29)
 
-Branch `issue-16-23-28-22-aml-test-batch` created:
-- **aml#28** closed: already done (declinedOsint/failedOsint already class-level in DefaultSarDraftingServiceTest)
-- **aml#16** closed: already done (GET /workitems/{id} assertion already in AmlInvestigationResourceTest lines 49–61)
-- **aml#22** closed: fanOut() investigation complete — root cause is ChannelService.create() not registering channels in ChannelGateway.registry; in-process dispatch is correct for Layer 3
-- **aml#23** fixed (commit 8c1509e): `postInvestigation_persistsQhorusCommandAndReplyForEachSpecialist` added — verifies COMMAND+DONE for entity/pattern, COMMAND+DECLINE for osint
+Layer 6 (trust-weighted routing) shipped to `casehub-aml` main (casehubio/aml upstream).
 
-**Open branch needs PR:** `issue-16-23-28-22-aml-test-batch`
+- `AmlTrustRoutingPolicyProvider` — per-capability thresholds via Preferences API (osint=0.70, sar=0.75, senior-analyst=0.80)
+- `AmlTrustScoreSeeder` — seeds Beta(α,β) at `@Observes @Priority(20) StartupEvent`; calls `trustScoreCache.hydrate()` after
+- `SarOutcomeFeedbackService` — writes `LedgerAttestation` (SOUND/FLAGGED) on SAR outcome
+- `AmlLayer6Resource` — `/api/layer6/investigations` POST/GET/outcome endpoints
+- Senior/junior worker variants for sar-drafting and osint-screening
+- 20/20 Layer 6 tests pass; 3/5 `AmlLayer5InvestigationTest` errors from engine#396 (CDI regression, not our code)
+- Blog: `blog/2026-05-29-mdp01-trust-loop-complete.md`
+- Garden: GE-20260529-d7b6f8 (TrustBootstrapSource SPI never fires on fresh deployment)
 
-## Current state
+## Issues filed this session
 
-**Project repo on branch `issue-16-23-28-22-aml-test-batch`.** Layer 5 shipped previously. Layer 6 is next.
+| Issue | Repo | What | Status |
+|-------|------|------|--------|
+| aml#38 | casehubio/aml | Layer 6 trust routing | ✅ closed |
+| aml#39 | casehubio/aml | Minor quality (double deserialization, score validation) | open |
+| engine#395 | casehubio/engine | Flyway scoping violation — V2000/V2001 at wrong path | open |
+| engine#396 | casehubio/engine | CaseLedgerEntryRepository @ApplicationScoped beating selected-alternatives → breaks Layer 5 tests | open |
+| parent#101 | casehubio/parent | casehub-aml.md Layer 6 status + new components | open |
+| parent#102 | casehubio/parent | PLATFORM.md cross-dep map: add casehub-engine-ledger → casehub-aml row | open |
 
-**Completed this session:**
-- casehubio/aml#31 closed: Layer 5 — adaptive investigation paths with casehub-engine
-- `AmlInvestigationCaseHub extends YamlCaseHub` + `aml-investigation.yaml` — 5 bindings, YAML structure + programmatic workers
-- PEP routing (senior-analyst-required binding fires on entityType=PEP), parallel OSINT+pattern, OSINT decline handling
-- `EntityResolutionResult` extended: entityType + riskScore fields
-- 42 tests passing; engine case reaches COMPLETED status
-- ADR-0002: YAML bindings + programmatic workers (decision recorded)
-- Blog: `2026-05-25-mdp01-parallel-by-default.md`
-- Garden: 2 entries (WORKER_SCHEDULED metadata, engine-testing index-dependency)
-- Parent issues filed: #65 (engine artifacts missing from BOM), #69 (casehub-aml.md Layer 5 status), #70 (PLATFORM.md cross-repo deps)
-- CLAUDE.md: Layer 4 ✅ and Layer 5 ✅ marked complete
+## Immediate next step
 
-## Actioned from casehub-life session (2026-05-26)
+Start Layer 7 — comparison table vs IBM AMLSim. Check epic #9 for a child issue: `gh issue view 9 --repo casehubio/aml`. None exists — create one via issue-workflow Phase 1.
 
-- **aml#34 + aml#35 CLOSED** — commit `2a88356` on main: renamed all 5 `Naive*` classes to `Default*`, dissolved `tutorial/` package (all classes now in `io.casehub.aml` root), moved test classes, removed gap comments from production code, updated LAYER-LOG.md (Layer 1 heading, navigation lines on all layers, accountability gaps table, class name references). Build passes, 0 remaining `Naive` references.
+## What's left
 
-## Issues filed from casehub-life session (2026-05-26)
+- aml#39 — double deserialization in SAR workers, range validation for investigationAccuracyScore · S · Low
+- engine#396 — CDI fix for CaseLedgerEntryRepository; once resolved, Layer 5 tests go green · S · Med
+- engine#395 — Flyway scoping fix; once resolved, remove local V2002/V2003 copies from aml · XS · Low
+- parent#101, parent#102 — peer repo doc updates · XS · Low (needs parent session)
 
-- **aml#34** — add layer navigation index to LAYER-LOG.md: explicit `**Navigation:** git log --grep="#N"` line per layer entry so LLM sessions can jump directly to any layer boundary
-- **aml#35** — rename all `Naive*` classes (`NaiveAmlInvestigationService` → `AmlInvestigationService` etc.), dissolve `tutorial/` package (these are default implementations, not tutorial-only code), update LAYER-LOG.md terminology ("domain baseline" not "naive Java"), remove any `// LAYER N GAP:` comments from production code
+## What's next
 
-## Open issues
-
-| Issue | What | Status |
-|-------|------|--------|
-| qhorus#190 | OutboundMessage needs inReplyTo + subjectId for PushAgentDispatch fan-out replies | open |
-| aml#22 | fanOut() not triggering PushAgentDispatch.post() | skip — qhorus refactoring ongoing |
-| parent#48 | casehub-qhorus.md MessageDispatch API docs | needs parent session |
-| ~~parent#65~~ | ~~Add engine artifacts to BOM~~ | ✅ closed by parent session 2026-05-26 |
-| ~~parent#69~~ | ~~casehub-aml.md: Layer 5 → complete~~ | ✅ closed by parent session 2026-05-26 |
-| ~~parent#70~~ | ~~PLATFORM.md: casehub-aml → casehub-engine cross-repo deps~~ | ✅ closed by parent session 2026-05-26 |
-| ~~aml#20~~ | ~~Flyway conflict~~ | ✅ closed — conflict doesn't exist; real fix tracked in work#229 (db/work/migration rename) |
-| ~~aml#33~~ | ~~CI repository_dispatch trigger~~ | ✅ closed — trigger was already present |
-| ~~aml#18~~ | ~~Adopt agentic harness framing~~ | ✅ closed — framing and LAYER-LOG already in place |
-
-## What to build next
-
-**Layer 6** — trust routing: experienced analysts routed to complex cases based on SAR outcome attestations. Requires engine#336 (trust scores in SelectionContext) and engine#337 (WorkOrchestrator resolves WorkerSelectionStrategy via CDI priority).
-
-**Immediate next step:** check epic #9 for a Layer 6 child issue (`gh issue view 9 --repo casehubio/aml`). None exists — create one via issue-workflow Phase 1.
+| # | Description | Scale | Complexity | Notes |
+|---|-------------|-------|------------|-------|
+| L7 | Layer 7 — comparison table vs IBM AMLSim and industry whitepapers | M | Med | Final tutorial layer; no issue yet |
 
 ## References
 
-- Blog: `blog/2026-05-25-mdp01-parallel-by-default.md`
-- ADR: `adr/0002-case-definition-yaml-with-programmatic-workers.md`
-- Spec: `docs/specs/2026-05-24-layer5-engine-design.md`
-- LAYER-LOG: Layer 5 entry added with 4 gotchas and replicate pattern
+- Blog: `blog/2026-05-29-mdp01-trust-loop-complete.md`
+- Spec: `docs/specs/2026-05-29-layer6-trust-routing-design.md` (in project)
+- Garden: GE-20260529-d7b6f8 (TrustBootstrapSource SPI)
