@@ -1,0 +1,8 @@
+branch: issue-39-layer6-minor-quality
+project-sha: main
+date: 2026-05-29
+issue: 39
+issue-repo: casehubio/aml
+flyway-next-v: none
+design-repo: workspace
+design-section-hashes:
