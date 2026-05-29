@@ -13,3 +13,4 @@
 | [2026-05-13-mdp01-layer2-compliance-workitem.md](2026-05-13-mdp01-layer2-compliance-workitem.md) | 2026-05-13 | Layer 2: the compliance officer's inbox — hexagonal architecture, @DefaultBean CDI wiring, 30-day FinCEN SLA |
 | [2026-05-10-mdp01-aml-first-code-layer-1.md](2026-05-10-mdp01-aml-first-code-layer-1.md) | 2026-05-10 | Layer 1 baseline: the anti-pattern, two integration surprises, and the scaffold that holds it |
 | [2026-05-23-mdp01-channel-ids-terrible-audit-keys.md](2026-05-23-mdp01-channel-ids-terrible-audit-keys.md) | 2026-05-23 | Layer 4: qhorus channelId-as-subjectId gap, MessageDispatch builder, caseId decision, @TestTransaction and stale-snapshot gotchas |
+| [2026-05-29-mdp01-trust-loop-complete.md](2026-05-29-mdp01-trust-loop-complete.md) | 2026-05-29 | Layer 6 trust routing shipped — AmlTrustRoutingPolicyProvider, seeder, feedback service, CDI regression noted |
