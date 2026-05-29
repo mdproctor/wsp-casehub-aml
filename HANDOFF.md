@@ -1,4 +1,4 @@
-# Handoff — casehub-aml Layer 6 complete
+# Handoff — casehub-aml S/XS backlog cleared
 2026-05-29
 
 ## What this project is
@@ -7,47 +7,47 @@
 
 ## This session (2026-05-29)
 
-Layer 6 (trust-weighted routing) shipped to `casehub-aml` main (casehubio/aml upstream).
+Cleared all S/XS issues scoped to this repo.
 
-- `AmlTrustRoutingPolicyProvider` — per-capability thresholds via Preferences API (osint=0.70, sar=0.75, senior-analyst=0.80)
-- `AmlTrustScoreSeeder` — seeds Beta(α,β) at `@Observes @Priority(20) StartupEvent`; calls `trustScoreCache.hydrate()` after
-- `SarOutcomeFeedbackService` — writes `LedgerAttestation` (SOUND/FLAGGED) on SAR outcome
-- `AmlLayer6Resource` — `/api/layer6/investigations` POST/GET/outcome endpoints
-- Senior/junior worker variants for sar-drafting and osint-screening
-- 20/20 Layer 6 tests pass; 3/5 `AmlLayer5InvestigationTest` errors from engine#396 (CDI regression, not our code)
-- Blog: `blog/2026-05-29-mdp01-trust-loop-complete.md`
-- Garden: GE-20260529-d7b6f8 (TrustBootstrapSource SPI never fires on fresh deployment)
+- LAYER-LOG.md: build approach note (#36) + Vertical Slice Index S1–S5 + Participates in: on each layer + Layer 6 stub (#37)
+- `SarOutcome` compact constructor: range validation + null guards for verdict/reason (#39)
+- `AmlInvestigationCaseHub.buildSummary`: eliminated double `objectMapper.convertValue` on `SuspiciousTransaction`
+- 9 tests in `SarOutcomeTest`; all Layer 6 tests pass (25/25)
+- Blog: `blog/2026-05-29-mdp02-invariants-and-a-plan.md`
 
 ## Issues filed this session
 
 | Issue | Repo | What | Status |
 |-------|------|------|--------|
-| aml#38 | casehubio/aml | Layer 6 trust routing | ✅ closed |
-| aml#39 | casehubio/aml | Minor quality (double deserialization, score validation) | open |
+| aml#36 | casehubio/aml | build approach note in LAYER-LOG.md | ✅ closed |
+| aml#37 | casehubio/aml | Vertical Slice Index in LAYER-LOG.md | ✅ closed |
+| aml#39 | casehubio/aml | double deserialization + SarOutcome validation | ✅ closed |
+| aml#40 | casehubio/aml | full Layer 6 entry in LAYER-LOG.md | open |
+| aml#41 | casehubio/aml | IllegalArgumentExceptionMapper (REST 400 for invalid SarOutcome) | open |
 | engine#395 | casehubio/engine | Flyway scoping violation — V2000/V2001 at wrong path | open |
-| engine#396 | casehubio/engine | CaseLedgerEntryRepository @ApplicationScoped beating selected-alternatives → breaks Layer 5 tests | open |
-| parent#101 | casehubio/parent | casehub-aml.md Layer 6 status + new components | open |
-| parent#102 | casehubio/parent | PLATFORM.md cross-dep map: add casehub-engine-ledger → casehub-aml row | open |
+| engine#396 | casehubio/engine | CaseLedgerEntryRepository CDI regression → breaks Layer 5 tests | open |
+| parent#101, #102 | casehubio/parent | casehub-aml.md + PLATFORM.md updates | open |
 
 ## Immediate next step
 
-Start Layer 7 — comparison table vs IBM AMLSim. Check epic #9 for a child issue: `gh issue view 9 --repo casehubio/aml`. None exists — create one via issue-workflow Phase 1.
+Start Layer 7 — comparison table vs IBM AMLSim. No child issue exists under epic #9:
+`gh issue view 9 --repo casehubio/aml` — create via issue-workflow Phase 1, then `work-start`.
 
 ## What's left
 
-- aml#39 — double deserialization in SAR workers, range validation for investigationAccuracyScore · S · Low
-- engine#396 — CDI fix for CaseLedgerEntryRepository; once resolved, Layer 5 tests go green · S · Med
-- engine#395 — Flyway scoping fix; once resolved, remove local V2002/V2003 copies from aml · XS · Low
+- aml#40 — full Layer 6 entry in LAYER-LOG.md (stub in place) · S · Low
+- aml#41 — IllegalArgumentExceptionMapper for clean 400 on invalid SarOutcome · XS · Low
+- engine#396 — CDI fix; once resolved, Layer 5 tests go green · S · Med
+- engine#395 — Flyway scoping fix; once resolved, remove local V2002/V2003 copies · XS · Low
 - parent#101, parent#102 — peer repo doc updates · XS · Low (needs parent session)
 
 ## What's next
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
-| L7 | Layer 7 — comparison table vs IBM AMLSim and industry whitepapers | M | Med | Final tutorial layer; no issue yet |
+| L7 | Layer 7 — comparison table vs IBM AMLSim and industry whitepapers | M | Med | No issue yet — create first |
 
 ## References
 
-- Blog: `blog/2026-05-29-mdp01-trust-loop-complete.md`
-- Spec: `docs/specs/2026-05-29-layer6-trust-routing-design.md` (in project)
-- Garden: GE-20260529-d7b6f8 (TrustBootstrapSource SPI)
+- Blog: `blog/2026-05-29-mdp02-invariants-and-a-plan.md`
+- Garden: GE-20260529-d7b6f8 (TrustBootstrapSource SPI — from prior session)
