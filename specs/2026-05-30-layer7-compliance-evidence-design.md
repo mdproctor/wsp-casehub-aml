@@ -289,6 +289,12 @@ WorkItem item = em.find(WorkItem.class, UUID.fromString(taskId));
 `WorkItem` is already in `quarkus.hibernate-orm.packages` and on the default datasource. This
 requires no additional dependency. File casehubio/work issue for a public read API.
 
+**UUID parse guard:** `transactionId` on `AmlInvestigationLedgerEntry` is typed as `String`.
+The `COMPLIANCE_REVIEW_OPENED` event stores a WorkItem task UUID there, but the field is
+structurally unconstrained. Wrap `UUID.fromString(transactionId)` in a try-catch
+`IllegalArgumentException` — return `sla.status = GAP` if the value does not parse as a UUID
+rather than propagating a runtime exception to the examiner.
+
 ### `TrustRoutingRequirement`
 
 ```java
@@ -439,23 +445,40 @@ Full round-trip against H2. Prerequisites: `JpaLedgerMerkleFrontierRepository` i
 
 ### `@QuarkusTest` — `AmlLayer7ErasureTest`
 
-Demonstrates GDPR erasure of a human actor (compliance officer) — the correct data subject,
-not a system actor.
+Verifies the GDPR erasure mechanism end-to-end. Uses `aml-orchestrator` as the erasure subject
+because it is the only actorId that writes `LedgerEntry` rows in the current tutorial.
 
-1. Run an investigation via Layer 6
-2. Await `sar-drafting` worker scheduled
-3. Simulate WorkItem completion: `workItemService.completeFromSystem(taskId, "analyst-alice", "approved")`
-   (writes audit entry with `actorId = "analyst-alice"`)
-4. `POST /api/actors/analyst-alice/erasure`
-5. Assert: `mappingFound = true`, `affectedEntryCount > 0`
-6. Query `work_item_audit_entry` table directly: rows still exist (audit structure preserved),
-   `actorId` now equals the pseudonymous token (not `"analyst-alice"`)
+**Why not `analyst-alice`:** `WorkItemService.completeFromSystem()` writes to
+`work_item_audit_entry` (work-internal audit store), not to `ledger_entry`. No `ActorIdentity`
+row is created for `analyst-alice`. `LedgerErasureService.erase("analyst-alice")` would return
+`mappingFound = false`, making the assertion useless.
 
-**Why this data subject:** `LedgerErasureService` pseudonymizes `actorId` entries — it erases
-actor identities, not subjects of investigation. The natural GDPR data subject is the analyst
-who worked the compliance review, whose identity should be erasable after they leave the
-organisation. Erasing `"aml-orchestrator"` (system actor) would destroy the audit trail —
-a compliance violation, not fulfillment.
+**Why `aml-orchestrator` for a mechanism test:** `aml-orchestrator` writes `CASE_OPENED` and
+`COMPLIANCE_REVIEW_OPENED` entries to `ledger_entry` — `ActorIdentityProvider.tokenise()` is
+called on persist, creating an `ActorIdentity` row IF tokenisation is enabled. Erasure of this
+actor replaces its token in `ActorIdentity`, pseudonymizing it in all audit entries.
+
+**Tokenisation must be enabled in test config.** Check the default for
+`casehub.ledger.identity.tokenisation.enabled` in `LedgerConfig`. If the default is `false`
+(which is likely — `PassThroughActorIdentityProvider` is the no-op path), add to test
+`application.properties`:
+```properties
+casehub.ledger.identity.tokenisation.enabled=true
+```
+Without this, `erase()` is a no-op regardless of actorId.
+
+Test steps:
+1. Run an investigation via Layer 6; await `sar-drafting` worker
+2. `POST /api/actors/aml-orchestrator/erasure`
+3. Assert: `mappingFound = true`, `affectedEntryCount >= 2`
+4. Query `ledger_entry` table directly: `CASE_OPENED` and `COMPLIANCE_REVIEW_OPENED` rows still
+   exist; `actor_id` column now holds the pseudonymous token (not `"aml-orchestrator"`)
+
+**What this demonstrates:** the erasure mechanism works — audit structure is preserved while
+actor identity is pseudonymized. It does not demonstrate the intended GDPR data subject scenario
+(a human analyst or investigated entity). That requires a future layer that writes human actorIds
+to `ledger_entry` rows. File casehubio/aml issue: add `AML_SAR_OFFICER_REVIEWED` ledger event
+with `actorId = officer.assigneeId` when compliance WorkItem is completed.
 
 ### `@QuarkusTest` — `AmlTrustRoutingAttestationTest`
 
