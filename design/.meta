@@ -1,0 +1,8 @@
+branch: issue-43-layer7-comparison
+project-sha: 055e613e547901d10d4b1510871e952b1d0a845a
+date: 2026-05-30
+issue: 43
+issue-repo: casehubio/aml
+flyway-next-v: none
+design-repo: workspace
+design-section-hashes:
