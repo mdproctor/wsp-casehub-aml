@@ -40,7 +40,10 @@ Read `design/JOURNAL.md §Layer 7 framing pivot` first.
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
-| L7 | Layer 7 — compliance evidence: FinCEN/FATF requirements mapped to layers | M | Med | Approach fresh; fetch IBM AMLSim README + AnChain/Sardine sources for accuracy |
+| #43 | Layer 7 — compliance evidence: FinCEN/FATF requirements mapped to architecture layers | M | Med | Active branch `issue-43-layer7-comparison`. Brainstorm first; fetch IBM AMLSim + AnChain/Sardine for accuracy. |
+| #42 | ActionRiskClassifier oversight gate — AML consequential actions routed to human oversight channel | M | Med | Depends on casehubio/engine#402 (SPI exists). Workers declare PlannedAction; classifier returns Autonomous or GateRequired. |
+| #32 | CaseMemoryStore — surface entity history and pattern context before/during investigation | M | Med | Blocked on casehubio/platform#27. Every case currently starts cold. |
+| #14 | Layer 8 — LLM supervisor mode (investigation triage) | L | High | Blocked on casehubio/engine#101 (labeled `future`, not scheduled). |
 
 ## References
 
