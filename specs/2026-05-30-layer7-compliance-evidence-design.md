@@ -1,6 +1,6 @@
 # Layer 7 — Compliance Evidence Design
-**Date:** 2026-05-30  
-**Issue:** casehubio/aml#43  
+**Date:** 2026-05-30 (amended post-review)
+**Issue:** casehubio/aml#43
 **Branch:** issue-43-layer7-comparison
 
 ---
@@ -8,85 +8,95 @@
 ## Problem
 
 Layers 1–6 deliver five accountability properties the architecture claims against FinCEN/FATF
-requirements. None of those properties are currently externally verifiable — there is no endpoint
-that surfaces the cryptographic and structural evidence for a given investigation. A FinCEN
-examiner asking "prove this investigation happened correctly" has nowhere to go.
+requirements. None are externally verifiable — there is no endpoint that surfaces the cryptographic
+and structural evidence for a given investigation. A FinCEN examiner has nowhere to go.
 
-The `verify()` boolean available from `LedgerVerificationService` is not compliance evidence — it
-is a claim the service makes about itself. An inclusion proof is evidence: the examiner takes the
-siblings and reconstructs the Merkle root independently, without trusting the service.
+A `verify()` boolean is not compliance evidence — it is a claim the service makes about itself.
+An inclusion proof is evidence: the examiner reconstructs the Merkle root independently from the
+siblings, without trusting the service.
 
-Layer 7 closes this gap by:
-1. Fixing a prerequisite chain break (`causedByEntryId` never set on `COMPLIANCE_REVIEW_OPENED`)
-2. Capturing trust scores at routing time (currently only available from a drifting cache)
-3. Wiring `LedgerErasureService` via a GDPR erasure endpoint
-4. Exposing a `GET /api/layer7/investigations/{caseId}/compliance-evidence` endpoint that returns
-   requirement-scoped evidence with Merkle inclusion proofs per key ledger event
+Layer 7 closes this gap:
+1. Fixes a prerequisite chain break (`causedByEntryId` never set on `COMPLIANCE_REVIEW_OPENED`)
+2. Captures trust scores at routing time (currently only in a drifting cache)
+3. Wires `LedgerErasureService` via an erasure endpoint
+4. Exposes `GET /api/investigations/{caseId}/compliance-evidence` returning requirement-scoped
+   evidence with Merkle inclusion proofs per key ledger event
 
-Future direction (out of scope): sign the whole evidence response with the service's private key,
-enabling fully offline verification. `LedgerEntry` already carries `agentSignature`/`agentPublicKey`
-fields anticipating this. Filed as a follow-on issue.
+**Future direction (out of scope):** sign the whole evidence response with the service's private
+key for offline verification. `LedgerEntry` already carries `agentSignature`/`agentPublicKey`
+anticipating this. `ComplianceEvidence` carries a nullable `signature` field as a forward signal.
 
 ---
 
 ## Prerequisite fix — `causedByEntryId` chain
 
-`AmlLedgerService.writeComplianceReviewOpened()` currently ignores `causedByEntryId`. The
-`COMPLIANCE_REVIEW_OPENED` entry is causally produced by the `CASE_OPENED` event — that link must
-be explicit in the ledger before any audit chain evidence can be honest.
+`AmlLedgerService.writeComplianceReviewOpened()` currently leaves `causedByEntryId` null. The
+`COMPLIANCE_REVIEW_OPENED` event is causally produced by `CASE_OPENED` and must say so.
 
-**Change:** add `UUID caseOpenedEntryId` parameter; set `entry.causedByEntryId = caseOpenedEntryId`.
+**The threading constraint:** `AmlEngineCoordinator.startInvestigation()` calls
+`writeCaseOpened()` and returns immediately. The `sar-drafting` worker (which eventually calls
+`writeComplianceReviewOpened` via `ComplianceReviewLifecycle`) runs on a Quartz thread
+asynchronously — `caseOpenedEntryId` is not in scope at that call site. Threading the ID through a
+parameter is not viable for the Layer 5 path (though it would work for the Layer 3 synchronous
+path). The fix must work for both.
+
+**Fix:** derive `causedByEntryId` inside `writeComplianceReviewOpened` itself. No new parameter.
 
 ```java
-// Before
-public void writeComplianceReviewOpened(UUID caseId, String taskId)
-
-// After
-public void writeComplianceReviewOpened(UUID caseId, String taskId, UUID caseOpenedEntryId)
+public void writeComplianceReviewOpened(UUID caseId, String taskId) {
+    UUID caseOpenedEntryId = repository
+        .findBySubjectIdAndEventType(caseId, "CASE_OPENED")
+        .map(e -> e.id).orElse(null);
+    // ...
+    entry.causedByEntryId = caseOpenedEntryId;
+}
 ```
 
-`AmlEngineCoordinator` threads the `caseOpenedEntryId` returned by `AmlLedgerService.writeCaseOpened()`
-through to this call. `DefaultAmlInvestigationService.noOp()` / `.stub()` stubs updated accordingly.
+Requires `LedgerEntryRepository.findBySubjectIdAndEventType(UUID, String)` — add this query
+method if it does not exist (JPQL over `AmlInvestigationLedgerEntry` filtered by `eventType`).
+This approach is self-healing: works regardless of whether the caller is synchronous (Layer 3)
+or asynchronous (Layer 5), and survives retries without state threading.
 
 ---
 
 ## New entity — `AmlTrustRoutingAttestation`
 
-`WorkerDecisionEntry` (engine-ledger) records which worker was selected but not the trust score
-that drove the decision. The cache score drifts as attestations accumulate. For FATF R.20 compliance
-evidence, the score at routing time must be captured immutably.
+`WorkerDecisionEntry` records which worker was selected but not the trust score at routing time.
+The cache drifts as attestations accumulate. For FATF R.20 evidence, the score must be captured
+immutably at routing time.
 
-**Class:** `app/.../compliance/AmlTrustRoutingAttestation extends LedgerEntry`
+**Package:** `app/.../trust/` (consistent with `AmlTrustScoreSeeder`, `SarOutcomeFeedbackService`)
 
 ```java
 @Entity
 @Table(name = "aml_trust_routing_attestation")
 @DiscriminatorValue("AML_TRUST_ROUTING")
 public class AmlTrustRoutingAttestation extends LedgerEntry {
-    @Column(name = "capability_tag", nullable = false)  public String capabilityTag;
-    @Column(name = "selected_worker_id", nullable = false) public String selectedWorkerId;
-    @Column(name = "trust_score_at_routing", nullable = false) public double trustScoreAtRouting;
-    @Column(name = "threshold_applied", nullable = false) public double thresholdApplied;
-    @Column(name = "investigation_case_id", nullable = false) public UUID investigationCaseId;
+    @Column(name = "capability_tag",       nullable = false) public String capabilityTag;
+    @Column(name = "selected_worker_id",   nullable = false) public String selectedWorkerId;
+    @Column(name = "trust_score_at_routing")                 public Double trustScoreAtRouting; // nullable — no data ≠ zero
+    @Column(name = "threshold_applied",    nullable = false) public double thresholdApplied;
+    @Column(name = "investigation_case_id",nullable = false) public UUID investigationCaseId;
 }
 ```
 
+`trustScoreAtRouting` is `Double` (nullable). `orElse(null)` when the cache has no entry —
+"no trust data available" must not be conflated with "trust score was 0.0". The column is
+nullable; the evidence report surfaces null explicitly.
+
 **Migration:** `V2004__aml_trust_routing_attestation.sql`
 
-**`subjectId`** is set to `investigationCaseId` so the attestation appears in the subject's ledger
-chain alongside `AmlInvestigationLedgerEntry` records. `sequenceNumber` follows the same
-`nextSequenceNumber()` logic used by `AmlLedgerService`.
-
-**Future engine issue:** add `trustScoreAtRouting` and `thresholdApplied` directly to
+**Future engine issue:** add `trustScoreAtRouting` and `thresholdApplied` natively to
 `WorkerDecisionEntry` so `AmlTrustRoutingAttestation` becomes redundant.
 
 ---
 
 ## New observer — `AmlTrustRoutingObserver`
 
-Observes `WorkerDecisionEvent` (CDI, fired by engine on each worker dispatch). Reads the
-current score from `TrustScoreCache` at event time — before any subsequent attestation cycle
-can cause drift — and writes `AmlTrustRoutingAttestation` to the ledger.
+**Package:** `app/.../trust/`
+
+Observes `WorkerDecisionEvent` (synchronous CDI, fired by engine on each worker dispatch). Reads
+trust score from `TrustScoreCache` before any subsequent attestation cycle causes drift.
 
 ```java
 @ApplicationScoped
@@ -95,11 +105,11 @@ public class AmlTrustRoutingObserver {
     @Inject AmlTrustRoutingPolicyProvider policyProvider;
     @Inject LedgerEntryRepository ledgerRepo;
 
-    @Transactional
+    @Transactional(Transactional.TxType.REQUIRES_NEW)
     void onWorkerDecision(@Observes WorkerDecisionEvent event) {
-        double score = trustScoreCache
+        Double score = trustScoreCache
             .getCapabilityScore(event.workerId(), event.capabilityTag())
-            .orElse(0.0);
+            .stream().boxed().findFirst().orElse(null);
         double threshold = policyProvider.forCapability(event.capabilityTag()).threshold();
 
         AmlTrustRoutingAttestation entry = new AmlTrustRoutingAttestation();
@@ -121,27 +131,46 @@ public class AmlTrustRoutingObserver {
 }
 ```
 
-**Transaction boundary:** `@Transactional` on the observer — the attestation must be committed
-before the evidence endpoint reads it. `WorkerDecisionEvent` is a synchronous CDI event.
+**`REQUIRES_NEW` and sequence number safety:** Layer 5 fires `pattern-analysis` and
+`osint-screening` in parallel on the same context tick — `WorkerDecisionEvent` can fire
+concurrently for the same `caseId`. `REQUIRES_NEW` gives each observer call its own transaction.
+Combined with a pessimistic lock on `(subject_id)` in `nextSequenceNumber()` — or a DB
+`SELECT ... FOR UPDATE` on the latest sequence row — this serializes writes per case without
+blocking across cases. Implement `nextSequenceNumber()` with:
 
-**Edge case — zero score:** if `TrustScoreCache` has no entry for this worker/capability pair
-(can happen on a fresh deployment if the seeder hasn't run), the score is recorded as `0.0` and
-the attestation is written. The evidence report reflects the actual value used for routing, not
-a sanitised one.
+```java
+em.createQuery("SELECT COALESCE(MAX(e.sequenceNumber), 0) FROM LedgerEntry e " +
+               "WHERE e.subjectId = :subjectId")
+  .setParameter("subjectId", subjectId)
+  .setLockMode(LockModeType.PESSIMISTIC_WRITE)
+  .getSingleResult()
+```
 
-**Concurrency risk — sequence numbers:** Layer 5 fires parallel workers for `pattern-analysis`
-and `osint-screening` simultaneously. If the engine dispatches their `WorkerDecisionEvent`s on
-concurrent threads, two observer calls share the same `caseId` subject and `nextSequenceNumber()`
-(which reads the DB max, not concurrent-safe) may produce duplicate values, causing a constraint
-violation on `(subject_id, sequence_number)`. Implementation must verify whether the engine
-serializes binding dispatch for a given case. If concurrent dispatch is confirmed, use a
-pessimistic DB lock in `nextSequenceNumber()` or delegate sequence assignment to the DB.
+**Observer failure mode (document for examiners):** if the observer fails (lock timeout, DB
+error), the investigation continues but the attestation is lost. The compliance evidence
+endpoint will show `trustRouting.status = PARTIAL` for that capability — this means the routing
+decision was not captured, not that Layer 6 was inactive. Examiners should treat `PARTIAL` on
+trust routing as an infrastructure failure, not an architectural gap. A reconciliation mechanism
+(detect missing attestations at case completion) is not in Layer 7 scope but should be a
+follow-on issue.
 
 ---
 
 ## API types in `api/`
 
 New package: `io.casehub.aml.compliance`
+
+### `RequirementStatus`
+
+```java
+public enum RequirementStatus { CLOSED, PARTIAL, BREACHED, GAP }
+```
+
+- `CLOSED` — requirement demonstrably met with evidence
+- `PARTIAL` — mechanism present but evidence incomplete (chain exists but not verified;
+  some but not all capabilities attested)
+- `BREACHED` — mechanism present but obligation not met (SLA deadline passed without completion)
+- `GAP` — architectural gap; requirement unaddressed
 
 ### Root response
 
@@ -152,34 +181,34 @@ public record ComplianceEvidence(
     AuditChainRequirement auditChain,
     SlaRequirement sla,
     TrustRoutingRequirement trustRouting,
-    GdprErasureRequirement gdprErasure
+    GdprErasureRequirement gdprErasure,
+    String signature          // null — reserved for future offline signing
 ) {}
 ```
 
-### `RequirementStatus`
-
-```java
-public enum RequirementStatus { CLOSED, PARTIAL, GAP }
-```
-
-`CLOSED` — requirement is demonstrably met with evidence.  
-`PARTIAL` — requirement is partially met; evidence incomplete (e.g. chain present but not verified).  
-`GAP` — architectural gap; requirement is not addressed.
-
 ### `AuditChainRequirement`
 
-Covers 31 CFR §1020.320(a) (auditable evidence chain) and FATF R.16 (tamper-evident record) in
-one record — both requirements are evidenced by the same ledger entries and inclusion proofs.
+Covers 31 CFR §1020.320(a) (auditable evidence chain) and FATF R.16 (tamper-evident record).
+Both requirements share the same ledger entries and inclusion proofs.
+
+**Scope constraint (document explicitly in `mechanism` string):** these inclusion proofs cover
+`AmlInvestigationLedgerEntry` records only — case lifecycle events (`CASE_OPENED`,
+`COMPLIANCE_REVIEW_OPENED`). Specialist dispatch evidence (COMMAND/DONE/DECLINE per agent) lives
+in the qhorus `MessageLedgerEntry` chain, which has a separate Merkle tree. Trust routing
+attestations are in `AmlTrustRoutingAttestation`. An examiner reading this chain sees case
+lifecycle events; the full specialist audit requires querying the qhorus ledger chain by
+`subjectId = caseId`. This must be stated in `mechanism` — not left for an examiner to discover.
 
 ```java
 public record AuditChainRequirement(
-    String id,                     // "FINCEN-31CFR1020.320-AUDIT-CHAIN"
+    String id,            // "FINCEN-31CFR1020.320-AUDIT-CHAIN"
     String citation,
-    String mechanism,
+    String mechanism,     // must state scope: "covers AML domain lifecycle events; specialist
+                          // dispatch audit lives in qhorus ledger chain (subjectId = caseId)"
     RequirementStatus status,
-    String treeRoot,               // Merkle root for this caseId's subject chain
-    boolean chainVerified,         // LedgerVerificationService.verify(caseId)
-    List<LedgerEventRecord> events // CASE_OPENED then COMPLIANCE_REVIEW_OPENED
+    String treeRoot,
+    boolean chainVerified,
+    List<LedgerEventRecord> events
 ) {}
 
 public record LedgerEventRecord(
@@ -188,7 +217,7 @@ public record LedgerEventRecord(
     String actorId,
     String actorRole,
     Instant occurredAt,
-    UUID causedByEntryId,          // null for CASE_OPENED; non-null for COMPLIANCE_REVIEW_OPENED
+    UUID causedByEntryId,     // null for CASE_OPENED; non-null for COMPLIANCE_REVIEW_OPENED
     String digest,
     AmlInclusionProof inclusionProof
 ) {}
@@ -201,42 +230,70 @@ public record AmlInclusionProof(
     String treeRoot
 ) {}
 
-public record AmlProofStep(
-    String hash,
-    String position                // "LEFT" or "RIGHT"
-) {}
+public record AmlProofStep(String hash, String position) {} // position: "LEFT" | "RIGHT"
 ```
 
-`status` logic: `CLOSED` if `chainVerified = true` AND all entries have `causedByEntryId` set as
-expected. `PARTIAL` if chain present but verification fails or `causedByEntryId` is null on
-`COMPLIANCE_REVIEW_OPENED`. `GAP` if no ledger entries exist for this caseId.
+`status` logic:
+- `CLOSED`: `chainVerified = true` AND `events[1].causedByEntryId` non-null
+- `PARTIAL`: chain exists but `chainVerified = false`, OR `causedByEntryId` null on
+  `COMPLIANCE_REVIEW_OPENED`
+- `GAP`: no ledger entries for this `caseId`
+
+**`LedgerVerificationService` in tests — required fix before implementation:** both
+`JpaLedgerEntryRepository` and `JpaLedgerMerkleFrontierRepository` are `@Alternative`. Currently
+only `JpaLedgerEntryRepository` appears in `quarkus.arc.selected-alternatives` in test
+`application.properties`. `LedgerVerificationService` injects `LedgerMerkleFrontierRepository` —
+CDI will fail to resolve it without also selecting `JpaLedgerMerkleFrontierRepository`. Add:
+
+```properties
+quarkus.arc.selected-alternatives=\
+  io.casehub.ledger.runtime.repository.jpa.JpaLedgerEntryRepository,\
+  io.casehub.ledger.runtime.repository.jpa.JpaLedgerMerkleFrontierRepository
+```
+
+Verify `LedgerVerificationService` injection succeeds in `@QuarkusTest` startup before writing
+`chainVerified = true` as an assertion.
 
 ### `SlaRequirement`
 
 ```java
 public record SlaRequirement(
-    String id,                     // "FINCEN-SAR-30DAY-SLA"
+    String id,            // "FINCEN-SAR-30DAY-SLA"
     String citation,
     String mechanism,
     RequirementStatus status,
     UUID workItemId,
     Instant claimDeadline,
-    Instant completedAt,           // null if WorkItem not yet completed
-    boolean slaMet,                // completedAt != null && completedAt.isBefore(claimDeadline)
+    Instant completedAt,  // null if not yet completed
+    boolean slaMet,
     List<String> candidateGroups,
-    String escalationPolicy        // "senior-compliance-officers after claimDeadline breach"
+    String escalationPolicy
 ) {}
 ```
 
-`status` logic: `CLOSED` if `workItemId` non-null and `claimDeadline` non-null. `PARTIAL` if
-WorkItem found but already past deadline without completion. `GAP` if no `COMPLIANCE_REVIEW_OPENED`
-ledger entry exists for this case.
+`status` logic:
+- `CLOSED`: `workItemId` non-null AND `claimDeadline` non-null AND `slaMet = true`
+- `BREACHED`: `workItemId` non-null AND `claimDeadline` non-null AND `slaMet = false`
+  (deadline passed without completion — a FinCEN obligation failure, not a partial state)
+- `GAP`: no `COMPLIANCE_REVIEW_OPENED` entry found for this case
+
+**WorkItem lookup:** `casehub-work-api` has no public query interface for reading a `WorkItem`
+by ID. Do not inject `WorkItemStore` (internal implementation class). Use JPA directly:
+
+```java
+@Inject EntityManager em;  // default PU — WorkItem is on the default datasource
+
+WorkItem item = em.find(WorkItem.class, UUID.fromString(taskId));
+```
+
+`WorkItem` is already in `quarkus.hibernate-orm.packages` and on the default datasource. This
+requires no additional dependency. File casehubio/work issue for a public read API.
 
 ### `TrustRoutingRequirement`
 
 ```java
 public record TrustRoutingRequirement(
-    String id,                            // "FATF-R20-TRUST-ROUTING"
+    String id,            // "FATF-R20-TRUST-ROUTING"
     String citation,
     String mechanism,
     RequirementStatus status,
@@ -246,71 +303,79 @@ public record TrustRoutingRequirement(
 public record RoutingDecisionRecord(
     String capabilityTag,
     String selectedWorker,
-    double trustScoreAtRouting,
+    Double trustScoreAtRouting,  // nullable — null means no trust data was available at routing
     double thresholdApplied,
-    UUID attestationEntryId               // UUID of AmlTrustRoutingAttestation ledger entry
+    UUID attestationEntryId
 ) {}
 ```
 
-`status` logic: `CLOSED` if at least one `RoutingDecisionRecord` present. `GAP` if no attestations
-found (engine never fired `WorkerDecisionEvent` for this case — indicates Layer 6 not active).
+`status` logic — compare actual attestations against expected capabilities:
+- `CLOSED`: attestations present for all capabilities defined in `AmlTrustRoutingPolicyProvider.POLICIES.keySet()`
+- `PARTIAL`: at least one attestation present but not all expected capabilities covered
+  (observer failure for some workers — see failure mode above)
+- `GAP`: no attestations found
 
 ### `GdprErasureRequirement`
 
+No `status` field — this is a capability descriptor, not per-case evidence. `status = CLOSED`
+unconditionally would be a self-attestation, not evidence.
+
 ```java
 public record GdprErasureRequirement(
-    String id,                     // "GDPR-ART17-ERASURE"
+    String id,            // "GDPR-ART17-ERASURE"
     String citation,
     String mechanism,
-    RequirementStatus status,
     boolean erasureCapabilityWired,
     boolean pseudonymizationActive,
-    String erasureEndpoint         // "POST /api/layer7/actors/{actorId}/erasure"
+    String erasureEndpoint
 ) {}
 ```
 
-`erasureCapabilityWired` is always `true` — the capability is wired at build time.
-`pseudonymizationActive` is always `true` — `ActorIdentityProvider` is registered.
-`status` is always `CLOSED` for this requirement. These fields are explicit rather than implied
-to give an examiner a named hook to verify: "yes, the service claims this capability is live."
+Both booleans are statically `true` — the capability is wired at build time. An examiner uses
+these as named capability claims; verification is by invoking the erasure endpoint.
 
 ---
 
 ## New service — `AmlComplianceEvidenceService`
 
-**Assembly logic per requirement:**
+**Package:** `app/.../compliance/`
 
-**Audit chain:** Query `AmlInvestigationLedgerEntry` by `subjectId = caseId` ordered by
-`sequenceNumber`. Call `LedgerVerificationService.verify(caseId)` for `chainVerified`.
-Call `LedgerVerificationService.inclusionProof(entryId)` per entry. Project ledger's
-`InclusionProof` + `ProofStep` to `AmlInclusionProof` + `AmlProofStep`. Confirm the exact field
-names of `ProofStep` from the decompiled ledger class during implementation.
+Assembly per requirement:
 
-**SLA:** Find entry with `eventType = 'COMPLIANCE_REVIEW_OPENED'`. Extract `transactionId`
-(stores the WorkItem task ID — dual-use field documented in Layer 4). Inject `WorkItemStore`
-directly (not `WorkItemService`); call `workItemStore.get(UUID.fromString(transactionId))`.
-Read `claimDeadline`, `completedAt`, `candidateGroups` from the returned `WorkItem`.
+**Audit chain:** query `AmlInvestigationLedgerEntry` by `subjectId = caseId` ordered by
+`sequenceNumber`. Call `LedgerVerificationService.verify(caseId)` and
+`LedgerVerificationService.treeRoot(caseId)`. Call `LedgerVerificationService.inclusionProof(entryId)`
+per entry. Project ledger `InclusionProof`/`ProofStep` to `AmlInclusionProof`/`AmlProofStep` —
+confirm exact field names of `ProofStep` from decompiled ledger class during implementation.
 
-**Trust routing:** Query `AmlTrustAttestationRepository.findByInvestigationCaseId(caseId)`.
-Map each `AmlTrustRoutingAttestation` to a `RoutingDecisionRecord`.
+**SLA:** find `AmlInvestigationLedgerEntry` with `eventType = 'COMPLIANCE_REVIEW_OPENED'`,
+extract `transactionId` (stores WorkItem task ID — dual-use field per Layer 4). Fetch `WorkItem`
+via `em.find(WorkItem.class, UUID.fromString(transactionId))`. Read `claimDeadline`,
+`completedAt`, `candidateGroups`.
 
-**GDPR:** Construct `GdprErasureRequirement` as constants — capability is statically wired.
+**Trust routing:** query `AmlTrustAttestationRepository.findByInvestigationCaseId(caseId)`.
+Compare returned `capabilityTag` set against `AmlTrustRoutingPolicyProvider.POLICIES.keySet()`
+to determine status.
+
+**GDPR:** construct as constants.
+
+Returns 404 if no `AmlInvestigationLedgerEntry` exists for `caseId`.
 
 ---
 
 ## New resource — `AmlLayer7Resource`
 
+**Package:** `app/.../compliance/`
+
+Domain vocabulary URLs — not layer-prefixed:
+
 ```
-GET  /api/layer7/investigations/{caseId}/compliance-evidence → ComplianceEvidence (200)
-POST /api/layer7/actors/{actorId}/erasure                   → ErasureResult      (200)
+GET  /api/investigations/{caseId}/compliance-evidence → ComplianceEvidence (200 | 404)
+POST /api/actors/{actorId}/erasure                   → ErasureResult      (200)
 ```
 
-`GET` delegates entirely to `AmlComplianceEvidenceService`. Returns 404 if no ledger entries
-exist for `caseId`.
-
-`POST /erasure` delegates to `LedgerErasureService.erase(actorId)`. Returns the
-`ErasureResult` record directly (`rawActorId`, `mappingFound`, `affectedEntryCount`). No body
-required — `actorId` is the path parameter.
+`GET` delegates to `AmlComplianceEvidenceService`.  
+`POST /erasure` delegates to `LedgerErasureService.erase(actorId)`. Path parameter only, no body.
 
 ---
 
@@ -319,16 +384,23 @@ required — `actorId` is the path parameter.
 Both `application.properties` (main and test):
 
 ```properties
-# AmlTrustRoutingAttestation entity package
-quarkus.hibernate-orm.qhorus.packages=...,io.casehub.aml.compliance
+# AmlTrustRoutingAttestation entity — trust/ package
+quarkus.hibernate-orm.qhorus.packages=...,io.casehub.aml.trust
 
 # V2004 migration
 quarkus.flyway.qhorus.locations=...,classpath:db/aml-trust-routing/migration
 ```
 
-`quarkus.arc.exclude-types` in test `application.properties`: no new exclusions needed —
-`AmlTrustRoutingObserver` must remain active in tests so attestations are written during the
-round-trip test.
+Test `application.properties` — add `JpaLedgerMerkleFrontierRepository` to selected
+alternatives (required for `LedgerVerificationService`):
+
+```properties
+quarkus.arc.selected-alternatives=\
+  io.casehub.ledger.runtime.repository.jpa.JpaLedgerEntryRepository,\
+  io.casehub.ledger.runtime.repository.jpa.JpaLedgerMerkleFrontierRepository
+```
+
+`AmlTrustRoutingObserver` must remain active in tests — do not add it to `exclude-types`.
 
 ---
 
@@ -336,74 +408,98 @@ round-trip test.
 
 ### Unit — `AmlComplianceEvidenceServiceTest`
 
-No Quarkus. Stubs for `LedgerEntryRepository`, `LedgerVerificationService`, `WorkItemStore`,
-`AmlTrustAttestationRepository`.
+No Quarkus. Stubs for `LedgerEntryRepository`, `LedgerVerificationService`, `EntityManager`
+(for WorkItem lookup), `AmlTrustAttestationRepository`.
 
-- Happy path: all four requirements `CLOSED`, two ledger events, `causedByEntryId` non-null
-  on second event, `inclusionProof` non-null on each
+- Happy path: all four requirements return expected status; two ledger events; `causedByEntryId`
+  non-null on second event; `inclusionProof` non-null on each
 - `chainVerified = false` → `auditChain.status = PARTIAL`
-- `completedAt` after `claimDeadline` → `sla.slaMet = false`
-- No attestations → `trustRouting.status = GAP`
+- `completedAt` after `claimDeadline` → `sla.status = BREACHED`, `sla.slaMet = false`
 - No `COMPLIANCE_REVIEW_OPENED` entry → `sla.status = GAP`
+- Partial attestation set → `trustRouting.status = PARTIAL`
+- No attestations → `trustRouting.status = GAP`
+- `trustScoreAtRouting = null` when cache empty → surfaces as null in `RoutingDecisionRecord`
 
 ### `@QuarkusTest` — `AmlLayer7ResourceTest`
 
-Full round-trip against H2:
+Full round-trip against H2. Prerequisites: `JpaLedgerMerkleFrontierRepository` in
+`selected-alternatives` (verify CDI startup succeeds before writing assertions).
+
 1. `POST /api/layer6/investigations` with a PEP transaction
 2. Awaitility: poll `WORKER_SCHEDULED` events until `sar-drafting` fires
-3. `GET /api/layer7/investigations/{caseId}/compliance-evidence`
+3. `GET /api/investigations/{caseId}/compliance-evidence`
 4. Assert:
    - `auditChain.chainVerified = true`
-   - `auditChain.events` has exactly 2 entries; `events[1].causedByEntryId = events[0].entryId`
-   - Each entry's `inclusionProof.treeRoot` equals `auditChain.treeRoot`
-   - `sla.workItemId` non-null; `sla.claimDeadline` approximately 30 days from now
-   - `trustRouting.decisions` non-empty; each has `trustScoreAtRouting > 0.0`
+   - `auditChain.events` has 2 entries; `events[1].causedByEntryId = events[0].entryId`
+   - Each `inclusionProof.treeRoot` equals `auditChain.treeRoot`
+   - `sla.workItemId` non-null; `sla.claimDeadline` approx 30 days from now; `sla.status = CLOSED`
+   - `trustRouting.decisions` non-empty; each has `trustScoreAtRouting` non-null and `> 0.0`
+   - `trustRouting.status = CLOSED` (all expected capabilities attested)
    - `gdprErasure.erasureCapabilityWired = true`
 
 ### `@QuarkusTest` — `AmlLayer7ErasureTest`
 
-1. Run an investigation (writes entries under `actorId = "aml-orchestrator"`)
-2. `POST /api/layer7/actors/aml-orchestrator/erasure`
-3. Assert response: `mappingFound = true`, `affectedEntryCount > 0`
-4. Query `ledger_entry` table directly: entries still exist (audit structure preserved)
+Demonstrates GDPR erasure of a human actor (compliance officer) — the correct data subject,
+not a system actor.
+
+1. Run an investigation via Layer 6
+2. Await `sar-drafting` worker scheduled
+3. Simulate WorkItem completion: `workItemService.completeFromSystem(taskId, "analyst-alice", "approved")`
+   (writes audit entry with `actorId = "analyst-alice"`)
+4. `POST /api/actors/analyst-alice/erasure`
+5. Assert: `mappingFound = true`, `affectedEntryCount > 0`
+6. Query `work_item_audit_entry` table directly: rows still exist (audit structure preserved),
+   `actorId` now equals the pseudonymous token (not `"analyst-alice"`)
+
+**Why this data subject:** `LedgerErasureService` pseudonymizes `actorId` entries — it erases
+actor identities, not subjects of investigation. The natural GDPR data subject is the analyst
+who worked the compliance review, whose identity should be erasable after they leave the
+organisation. Erasing `"aml-orchestrator"` (system actor) would destroy the audit trail —
+a compliance violation, not fulfillment.
 
 ### `@QuarkusTest` — `AmlTrustRoutingAttestationTest`
 
-1. Run an investigation via Layer 6 endpoint
-2. Await `sar-drafting` worker scheduled
+1. Run investigation via Layer 6
+2. Await `sar-drafting` worker
 3. Query `aml_trust_routing_attestation` table via `EntityManager`
-4. Assert one row per fired capability tag; `trust_score_at_routing > 0.0`; `threshold_applied`
-   matches `AmlTrustRoutingPolicyProvider` policy for that capability
+4. Assert one row per fired capability tag; `trust_score_at_routing` non-null and `> 0.0`;
+   `threshold_applied` matches `AmlTrustRoutingPolicyProvider` policy for that capability
+5. Verify `investigationCaseId` matches the started case UUID
 
 ---
 
 ## Files created / modified
 
-**New in `api/`:**
-- `api/.../compliance/ComplianceEvidence.java`
-- `api/.../compliance/RequirementStatus.java`
-- `api/.../compliance/AuditChainRequirement.java`
-- `api/.../compliance/LedgerEventRecord.java`
-- `api/.../compliance/AmlInclusionProof.java`
-- `api/.../compliance/AmlProofStep.java`
-- `api/.../compliance/SlaRequirement.java`
-- `api/.../compliance/TrustRoutingRequirement.java`
-- `api/.../compliance/RoutingDecisionRecord.java`
-- `api/.../compliance/GdprErasureRequirement.java`
+**New in `api/.../compliance/`:**
+- `ComplianceEvidence.java`
+- `RequirementStatus.java`
+- `AuditChainRequirement.java`
+- `LedgerEventRecord.java`
+- `AmlInclusionProof.java`
+- `AmlProofStep.java`
+- `SlaRequirement.java`
+- `TrustRoutingRequirement.java`
+- `RoutingDecisionRecord.java`
+- `GdprErasureRequirement.java`
 
-**New in `app/`:**
-- `app/.../compliance/AmlTrustRoutingAttestation.java`
-- `app/.../compliance/AmlTrustRoutingObserver.java`
-- `app/.../compliance/AmlTrustAttestationRepository.java`
-- `app/.../compliance/AmlComplianceEvidenceService.java`
-- `app/.../compliance/AmlLayer7Resource.java`
-- `app/src/main/resources/db/aml-trust-routing/migration/V2004__aml_trust_routing_attestation.sql`
+**New in `app/.../trust/`:**
+- `AmlTrustRoutingAttestation.java`
+- `AmlTrustRoutingObserver.java`
+- `AmlTrustAttestationRepository.java`
+- `db/aml-trust-routing/migration/V2004__aml_trust_routing_attestation.sql`
+
+**New in `app/.../compliance/`:**
+- `AmlComplianceEvidenceService.java`
+- `AmlLayer7Resource.java`
 
 **Modified:**
-- `app/.../ledger/AmlLedgerService.java` — `writeComplianceReviewOpened` gains `caseOpenedEntryId` param
-- `app/.../engine/AmlEngineCoordinator.java` — threads `caseOpenedEntryId` through to `AmlLedgerService`
+- `app/.../ledger/AmlLedgerService.java` — `writeComplianceReviewOpened` derives
+  `causedByEntryId` internally via `findBySubjectIdAndEventType` query; no new parameter
 - `app/src/main/resources/application.properties` — package scan + Flyway location
-- `app/src/test/resources/application.properties` — package scan + Flyway location
+- `app/src/test/resources/application.properties` — add `JpaLedgerMerkleFrontierRepository`
+  to `selected-alternatives`; package scan + Flyway location
 
-**Future issue:** casehubio/engine — add `trustScoreAtRouting` + `thresholdApplied` to
-`WorkerDecisionEntry` so `AmlTrustRoutingAttestation` becomes redundant.
+**Issues to file before implementation begins:**
+- casehubio/engine: add `trustScoreAtRouting` + `thresholdApplied` to `WorkerDecisionEntry`
+- casehubio/work: public read API for `WorkItem` by ID (currently no public query interface)
+- casehubio/aml: observer failure leaves silent evidence gaps — reconciliation mechanism needed
