@@ -15,4 +15,5 @@
 | [2026-05-23-mdp01-channel-ids-terrible-audit-keys.md](2026-05-23-mdp01-channel-ids-terrible-audit-keys.md) | 2026-05-23 | Layer 4: qhorus channelId-as-subjectId gap, MessageDispatch builder, caseId decision, @TestTransaction and stale-snapshot gotchas |
 | [2026-05-29-mdp01-trust-loop-complete.md](2026-05-29-mdp01-trust-loop-complete.md) | 2026-05-29 | Layer 6 trust routing shipped — AmlTrustRoutingPolicyProvider, seeder, feedback service, CDI regression noted |
 | [2026-05-29-mdp02-invariants-and-a-plan.md](2026-05-29-mdp02-invariants-and-a-plan.md) | 2026-05-29 | S1 spans three layers, not one; null verdict NPE catch; double deserialization fix in SAR workers |
+| [2026-05-30-mdp01-two-mappers-one-exception.md](2026-05-30-mdp01-two-mappers-one-exception.md) | 2026-05-30 | Layer 6 log complete + two JAX-RS exception mappers: direct service throws and Jackson ValueInstantiationException wrapping |
 | [2026-05-31-mdp01-proof-not-claims.md](2026-05-31-mdp01-proof-not-claims.md) | 2026-05-31 | Layer 7: compliance evidence — claims vs proof, @ObservesAsync silent failure, JAX-RS path conflict, SLA PARTIAL correctness bug |
