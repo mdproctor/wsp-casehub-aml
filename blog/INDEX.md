@@ -17,3 +17,4 @@
 | [2026-05-29-mdp02-invariants-and-a-plan.md](2026-05-29-mdp02-invariants-and-a-plan.md) | 2026-05-29 | S1 spans three layers, not one; null verdict NPE catch; double deserialization fix in SAR workers |
 | [2026-05-30-mdp01-two-mappers-one-exception.md](2026-05-30-mdp01-two-mappers-one-exception.md) | 2026-05-30 | Layer 6 log complete + two JAX-RS exception mappers: direct service throws and Jackson ValueInstantiationException wrapping |
 | [2026-05-31-mdp01-proof-not-claims.md](2026-05-31-mdp01-proof-not-claims.md) | 2026-05-31 | Layer 7: compliance evidence — claims vs proof, @ObservesAsync silent failure, JAX-RS path conflict, SLA PARTIAL correctness bug |
+| [2026-05-31-mdp02-closed-isnt-clean.md](2026-05-31-mdp02-closed-isnt-clean.md) | 2026-05-31 | Hygiene audit: closure stamps were clean, promotion wasn't — blog, plans, spec, protocol, and a remote-less branch all fixed |
