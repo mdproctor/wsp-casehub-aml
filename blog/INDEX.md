@@ -2,6 +2,7 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-06-02-mdp01-seven-layers-thirteen-sections.md](2026-06-02-mdp01-seven-layers-thirteen-sections.md) | 2026-06-02 | ARC42STORIES.MD bootstrap — mode-first approach, 7 layers migrated, 3 extra gotchas from blogs |
 | [2026-05-25-mdp01-parallel-by-default.md](2026-05-25-mdp01-parallel-by-default.md) | 2026-05-25 | Layer 5: YAML bindings + programmatic workers, parallel dispatch by default, UUID identity fix, WORKER_SCHEDULED metadata |
 | [2026-05-25-mdp02-misleading-jdbc-error.md](2026-05-25-mdp02-misleading-jdbc-error.md) | 2026-05-25 | Housekeeping: four pre-done issues closed, @Transactional XA failure on dual datasources, GET /workitems SLA assertion |
 | [2026-05-24-mdp01-layer-5-was-never-blocked.md](2026-05-24-mdp01-layer-5-was-never-blocked.md) | 2026-05-24 | Layer 5's blocking label pointed at the wrong engine milestone — it was never actually blocked |
