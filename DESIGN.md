@@ -1,5 +1,7 @@
 # casehub-aml Design
 
+> **Architecture record moved to `ARC42STORIES.MD` (2026-06-02).** The content below predates the migration and may contain material not yet fully reflected in ARC42STORIES.MD. Do not delete — use it to cross-check completeness.
+
 ## Architecture
 
 ### Coordinator + Specialist Composer Pattern
