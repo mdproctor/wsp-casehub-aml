@@ -387,8 +387,20 @@ quarkus.arc.selected-alternatives=io.casehub.platform.memory.inmem.InMemoryMemor
 ## Pre-Implementation Clarification Items
 
 1. **Merkle hash coverage** — confirm hash does not cover JOIN table columns before any schema change. Blocker.
-2. **Engine context update API** — confirm whether casehub-engine supports post-start context injection. Determines whether `caseId` can be in the initial COMMAND payload to behaviours or whether it must be null in behaviour-generated memory entries.
-3. **YAML inputSchema and Java payload access** — confirm whether behaviours read their input strictly from YAML-defined keys or can access raw COMMAND payload fields directly.
+
+### Resolved: caseId in behaviour-generated memory entries
+
+The case UUID (engine UUID) cannot be in the COMMAND payload for the first wave of workers.
+
+**Why:** `WorkerScheduleEventHandler.dispatchCommand()` sets `correlationId = String.valueOf(eventLogId)` — the EventLog entry ID, not the case UUID. The `OutboundMessage` carries no `subjectId` (qhorus#190 pending). `PushAgentDispatch.post()` calls `behaviour.handle(null)` — the message is never passed to the behaviour. The engine UUID is only available after `startCase()` returns, and the first contextChange (which triggers worker scheduling) fires before any post-start context injection could execute.
+
+**Resolution:** Behaviour-generated memory entries (`storeEntityRisk`, `storeNetworkRelationship`, `storePatternFindings`) carry `caseId = null`. The primary query key is `entityId`; `caseId` is useful for retrospective correlation but not required for the core entity-history surfacing. SAR outcome memories (written by `AmlSarOutcomeMemoryObserver` from the CDI event) always carry the correct engine UUID — the `SarOutcomeRecordedEvent` payload includes `caseId`.
+
+**Future fix path:** When qhorus#190 ships and `OutboundMessage` gains a `subjectId` field, `PushAgentDispatch` can propagate the case UUID to behaviours. At that point the `AmlMemoryService` store methods can accept a non-null caseId from behaviour callers.
+
+### Resolved: YAML inputSchema and payload access
+
+The YAML inputSchema extension (`caseId: .caseId`) would only be useful if `caseId` were in the case context. Since it cannot be there for the first worker wave (circular dependency above), the inputSchema extension for `caseId` is deferred until qhorus#190 resolves the propagation gap. Behaviours pass `null` for caseId to `AmlMemoryService` methods.
 
 ---
 
