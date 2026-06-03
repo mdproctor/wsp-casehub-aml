@@ -1,0 +1,8 @@
+branch: issue-32-case-memory-store
+project-sha: 2431ce3af1daa3d0a7d79b33fd1e00f9a00f3c8f
+date: 2026-06-03
+issue: 32
+issue-repo: casehubio/aml
+flyway-next-v: unknown
+design-repo: workspace
+design-section-hashes:
