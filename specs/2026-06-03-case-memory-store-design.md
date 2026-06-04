@@ -208,26 +208,38 @@ If `queryPriorContext()` throws, log WARN, inject `{"hasHistory": false, "knownH
 
 ---
 
-## YAML Binding — Merged Senior Analyst Routing
+## YAML Binding — Split Senior Analyst Routing
 
-The `senior-analyst-required` binding is extended to evaluate prior context in an OR with the entity resolution result. The separate `immediate-senior-required` binding is NOT added — merging eliminates a timing race between two bindings dispatching the same capability.
+> **Implementation note:** the original spec proposed a merged OR binding. During implementation a double-dispatch race was discovered: with async Quartz execution, a merged binding fires on the initial contextChange (from prior context) AND again when entity-resolution writes its result — before `seniorAnalystReview` is written back to context. Two concurrent Quartz jobs then both write `WorkerDecisionEntry` for the same case, racing on the `UQ_MERKLE_FRONTIER_SUBJECT_LEVEL` unique constraint in H2. The solution is two mutually exclusive bindings with complementary guards.
+
+The `senior-analyst-required` binding is split into two bindings with mutually exclusive conditions:
 
 ```yaml
-## Fires on first contextChange where any high-risk signal is present.
-## Prior context signal: fires at case start for entities with established high-risk history.
-## Entity resolution signal: fires after entity resolution for first-time encounters.
-## The .seniorAnalystReview == null guard prevents re-fire after capability result is written back.
-- name: senior-analyst-required
+## Fires ONLY before entity resolution completes (from prior context alone).
+## entityResolution == null becomes permanently false once entity-resolution writes its result,
+## guaranteeing exactly one dispatch for the prior-context signal.
+- name: senior-analyst-required-prior-context
   on: { contextChange: {} }
   when: >-
-    ((.priorEntityContext.knownHighRisk == true) or
-     (.entityResolution.entityType == "PEP") or
-     (.entityResolution.riskScore > 0.8)) and
+    .priorEntityContext.knownHighRisk == true and
+    .entityResolution == null and
+    .seniorAnalystReview == null
+  capability: senior-analyst-review
+
+## Fires ONLY after entity resolution, for entities NOT already routed by prior context.
+## priorEntityContext.knownHighRisk != true prevents double dispatch for entities
+## with prior history that were also confirmed PEP/high-risk during resolution.
+- name: senior-analyst-required-resolution
+  on: { contextChange: {} }
+  when: >-
+    .entityResolution != null and
+    .priorEntityContext.knownHighRisk != true and
+    (.entityResolution.entityType == "PEP" or .entityResolution.riskScore > 0.8) and
     .seniorAnalystReview == null
   capability: senior-analyst-review
 ```
 
-This binding fires once for a known-high-risk entity (from prior context, on first contextChange), and once for a first-time-encountered PEP or high-risk entity (after entity resolution). The `.seniorAnalystReview == null` guard ensures only one dispatch occurs regardless of how many contextChange events fire.
+The two conditions are mutually exclusive by design: the prior-context binding fires only while `entityResolution == null`; once entity-resolution writes its result, that condition is permanently false. The resolution binding suppresses itself for entities already routed by prior context.
 
 ---
 
