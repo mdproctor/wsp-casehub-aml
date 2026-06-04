@@ -77,10 +77,10 @@ Returns an `AmlPriorContext` value record.
 
 | Method | Called from | Stored under | Notes |
 |---|---|---|---|
-| `storeEntityRisk(caseId, entityId, EntityResolutionResult)` | `EntityResolutionBehaviour` | `entityId` from result | |
-| `storeNetworkRelationship(caseId, SuspiciousTransaction, EntityResolutionResult)` | `EntityResolutionBehaviour` | both account IDs via `storeAll()` | |
-| `storePatternFindings(caseId, SuspiciousTransaction, PatternAnalysisResult)` | `PatternAnalysisBehaviour` | both account IDs via `storeAll()` | Structuring is destination-focal; origin-only would be an intelligence gap |
-| `storeSarOutcome(caseId, SuspiciousTransaction, SarOutcome)` | `AmlSarOutcomeMemoryObserver` | both account IDs via `storeAll()` | WITHDRAWN verdict writes confidence = 0.0 reversal entry |
+| `storeEntityRisk(caseId, entityId, EntityResolutionResult)` | `EntityResolutionBehaviour` | `entityId` from result | **caseId = null** until qhorus#190 — see Pre-Implementation §Resolved |
+| `storeNetworkRelationship(caseId, SuspiciousTransaction, EntityResolutionResult)` | `EntityResolutionBehaviour` | both account IDs via `storeAll()` | **caseId = null** until qhorus#190 |
+| `storePatternFindings(caseId, SuspiciousTransaction, PatternAnalysisResult)` | `PatternAnalysisBehaviour` | both account IDs via `storeAll()` | **caseId = null** until qhorus#190; structuring is destination-focal |
+| `storeSarOutcome(caseId, SuspiciousTransaction, SarOutcome)` | `AmlSarOutcomeMemoryObserver` | both account IDs via `storeAll()` | **caseId = engine UUID** from event payload; WITHDRAWN writes confidence = 0.0 reversal |
 
 ### Attribute conventions
 
@@ -171,19 +171,9 @@ A new CDI event type carrying `UUID caseId`. `AmlLayer6Resource` fires it after 
 - `SarOutcomeFeedbackService` becomes `@Observes SarOutcomeRecordedEvent` (synchronous — participates in existing qhorus transaction)
 - `AmlSarOutcomeMemoryObserver` becomes `@Observes @Transactional(REQUIRES_NEW) SarOutcomeRecordedEvent` (own transaction on default datasource via memory-jpa)
 
-### YAML inputSchema extension
+### YAML inputSchema note
 
-Each capability that writes memory needs `caseId` in its payload. The engine UUID is added to `initialContext` as `"caseId"` at case start and is referenced in the inputSchema:
-
-```yaml
-capabilities:
-  - name: entity-resolution
-    inputSchema: "{ transaction: .transaction, caseId: .caseId }"
-  - name: pattern-analysis
-    inputSchema: "{ transaction: .transaction, entityGraph: .entityResolution.ownershipChain, caseId: .caseId }"
-```
-
-Other capabilities that do not write memory do not need the extension.
+The `caseId: .caseId` inputSchema extension is deferred until qhorus#190 resolves the propagation gap — see Pre-Implementation §Resolved: YAML inputSchema. Behaviours pass `null` for caseId to `AmlMemoryService` methods. No inputSchema changes are required for this layer beyond any already present (e.g. `entityGraph: .entityResolution.ownershipChain` for pattern-analysis, which is already in the YAML).
 
 ---
 
@@ -203,34 +193,16 @@ If no `AmlCaseOpenedLedgerEntry` exists for the caseId (e.g. race or bug), the o
 
 ## Query Injection — Prior Context Enters the Case
 
-`AmlEngineCoordinator.startInvestigation()` is extended with these steps before `startCase()`:
+`AmlEngineCoordinator.startInvestigation()` is extended with four steps:
 
 ```
-1. caseId = caseHub.startCase(initialContext).get(timeout)  ← unchanged first
+1. query  AmlMemoryService.queryPriorContext(transaction)   → AmlPriorContext
+2. serial AmlPriorContext.toContextMap()                    → Map<String, Object>
+3. build  initialContext: { "transaction": txMap, "priorEntityContext": contextMap }
+4. start  caseId = caseHub.startCase(initialContext).get(timeout)  → engine UUID
 ```
 
-Wait — the caseId is returned BY startCase. The query needs to happen BEFORE startCase to inject prior context. The solution:
-
-```
-1. query AmlMemoryService.queryPriorContext(transaction)    → AmlPriorContext
-2. serialize via AmlPriorContext.toContextMap()             → Map<String, Object>
-3. build initialContext:
-       "transaction" → txMap
-       "caseId"      → to be filled after startCase (see below)
-       "priorEntityContext" → contextMap
-4. caseId = caseHub.startCase(initialContext).get(timeout)  → engine UUID
-5. update initialContext with "caseId" = caseId.toString()  [if engine supports context update]
-```
-
-**Problem:** The engine UUID is not known until after `startCase()`. But `caseId` must be in the COMMAND payload for behaviours. The engine uses the initialContext as the starting blackboard. After case start, the engine UUID can be injected via a context update OR added as `"caseId"` immediately after via an engine API if one exists.
-
-**Simpler resolution:** Use a two-step initialContext build:
-- Build `priorEntityContext` synchronously before `startCase()`
-- After `startCase()` returns the engine UUID, inject it into context via an engine context-update call (if the engine supports it) OR accept that `caseId` is not available to the FIRST binding (entity-resolution fires on first contextChange, by which point the coordinator can have updated context)
-
-If no context-update API exists in the engine: add `caseId` to a second initialContext update after case start. This is an engine-level question requiring clarification before implementation. **Flag as a pre-implementation clarification item.**
-
-Alternative if context update is unavailable: the SAR outcome observer gets the caseId from the event payload (it is always the engine UUID), so the memory writes from the SAR observer are correctly keyed. For behaviour-generated memories, if `caseId` cannot be in the first COMMAND payload, the `caseId` field in those memory entries can be null — acceptable, since the primary query key is `entityId`, not `caseId`.
+`caseId` is not added to `initialContext` — see Pre-Implementation §Resolved: caseId in behaviour-generated memory entries for why this cannot be done cleanly at this layer.
 
 If `queryPriorContext()` throws, log WARN, inject `{"hasHistory": false, "knownHighRisk": false, "entityRiskCount": 0, "networkCount": 0, "patternCount": 0, "facts": []}`, and proceed.
 
@@ -371,13 +343,13 @@ quarkus.arc.selected-alternatives=io.casehub.platform.memory.inmem.InMemoryMemor
 
 | Class/file | Change |
 |---|---|
-| `AmlEngineCoordinator` | Query prior context, inject `priorEntityContext` and `caseId` into initialContext before/after `startCase()` |
-| `EntityResolutionBehaviour` | Inject `AmlMemoryService`, call `storeEntityRisk()` + `storeNetworkRelationship()`; read caseId from payload |
-| `PatternAnalysisBehaviour` | Inject `AmlMemoryService`, call `storePatternFindings()` under both accounts; read caseId from payload |
+| `AmlEngineCoordinator` | Query prior context, inject `priorEntityContext` into initialContext before `startCase()` |
+| `EntityResolutionBehaviour` | Inject `AmlMemoryService`, call `storeEntityRisk()` + `storeNetworkRelationship()` (caseId = null) |
+| `PatternAnalysisBehaviour` | Inject `AmlMemoryService`, call `storePatternFindings()` under both accounts (caseId = null) |
 | `AmlLedgerService` | `writeCaseOpened()` creates `AmlCaseOpenedLedgerEntry`; `writeComplianceReviewOpened()` creates `AmlComplianceReviewLedgerEntry` |
 | `AmlLayer6Resource` | Fire `SarOutcomeRecordedEvent`; remove direct call to `SarOutcomeFeedbackService` |
 | `SarOutcomeFeedbackService` | Becomes `@Observes SarOutcomeRecordedEvent` |
-| `aml-investigation.yaml` | Extend `entity-resolution` + `pattern-analysis` inputSchemas with `caseId: .caseId`; merge `senior-analyst-required` binding |
+| `aml-investigation.yaml` | Merge `senior-analyst-required` binding to evaluate `priorEntityContext.knownHighRisk` |
 | `application.properties` | Flyway locations + Hibernate packages |
 | `casehub-aml-app/pom.xml` | Add `memory-jpa` (compile) + `memory-inmem` (test) |
 | VNNnn migration | Drop `aml_investigation_ledger_entry`; create two subclass tables |
