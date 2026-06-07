@@ -1,0 +1,9 @@
+branch: issue-44-attestation-reconciliation
+project-sha: 46728450580b86a90ef36c86e7d11f5745ff7945
+date: 2026-06-07
+issue: 44
+issue-repo: casehubio/aml
+covers: 44,55
+flyway-next-v: 2009
+design-repo: workspace
+design-section-hashes:
