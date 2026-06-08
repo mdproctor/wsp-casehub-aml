@@ -488,6 +488,24 @@ private AuditChainRequirement buildAuditChain(UUID caseId,
         List<AmlSarOfficerReviewedLedgerEntry> officerReviewEntries)
 ```
 
+**`assembleEvidence()` must also be updated** (package-private, used by all 5 existing unit
+tests via `service.assembleEvidence(caseId)`). It calls `build()` internally and will fail
+to compile without the 4th argument:
+
+```java
+// Before
+return build(caseId, filterCaseOpened(all), filterComplianceReview(all));
+
+// After
+return build(caseId,
+    filterCaseOpened(all), filterComplianceReview(all),
+    filterSarOfficerReviewed(all));  // ADD
+```
+
+The 5 existing unit tests call `service.assembleEvidence(caseId)` — their call sites are
+unchanged (method signature stays `assembleEvidence(UUID caseId)`), but they require the
+`mockReconciler` stub in setUp (already covered in §7 `AmlComplianceEvidenceServiceTest`).
+
 Officer review entries appear as `"SAR_OFFICER_REVIEWED"` events in `LedgerEventRecord` list.
 
 **Extended `allLinked` check:**
