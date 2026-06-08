@@ -387,18 +387,40 @@ The observer's guard filters on `startsWith("aml:investigation:")` — these are
 ignored when the officer completes them. Hard cutover, no back-fill. Acceptable for a
 tutorial system with no production data.
 
-### 5.2 `AmlEngineCoordinator` — inject `caseId` into blackboard initial context
+### 5.2 `AmlEngineCoordinator` — signal `caseId` into blackboard after case start
 
-`startInvestigation()` currently puts only `"transaction"` and `"priorEntityContext"`.
-Add:
+`startInvestigation()` builds `initialContext` before calling `startCase()` — `caseId` is
+the **return value** of `startCase()` and does not exist before the call returns. It cannot
+be put into `initialContext` before the call.
+
+`CaseHub.signal(UUID caseId, String path, Object value)` (confirmed from bytecode: returns
+`void`, delegates to `runtime.signal()`, synchronous blackboard update) is called
+immediately after `startCase()` unblocks:
 
 ```java
-initialContext.put("caseId", caseId.toString());
+caseId = caseHub.startCase(initialContext)
+        .toCompletableFuture()
+        .get(CASE_START_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+// Signal caseId into the blackboard immediately — workers read it from input context.
+// Safe: sar-drafting is the last worker to execute (entity-resolution → pattern/OSINT
+// parallel → sar-drafting). Quartz job scheduling gives ample time for the in-memory
+// blackboard update to propagate before sar-drafting reads input.get("caseId").
+caseHub.signal(caseId, "caseId", caseId.toString());
+
+ledgerService.writeCaseOpened(transaction, caseId);
 ```
 
-Sar-drafting workers extract it:
+Sar-drafting workers extract it with a null guard (fail loudly rather than NPE if signal
+somehow arrives late):
+
 ```java
-final UUID caseId = UUID.fromString((String) input.get("caseId"));
+final String rawCaseId = (String) input.get("caseId");
+if (rawCaseId == null) {
+    LOG.errorf("caseId not in context for sar-drafting worker — signal may not have arrived");
+    throw new RuntimeException("caseId missing from case context");
+}
+final UUID caseId = UUID.fromString(rawCaseId);
 // then:
 complianceReviewLifecycle.openReview(tx, buildSummary(input, tx, sarNarrative), caseId)
 ```
@@ -571,8 +593,9 @@ New test in `AmlLayer7ResourceTest`:
 
 1. `POST /api/layer6/investigations` with PEP transaction → `caseId`
 2. Poll `GET /api/layer6/investigations/{caseId}` until `status=completed`
-3. `GET /api/investigations/{caseId}/compliance-evidence` → assert `sla.taskId` non-null;
-   extract `taskId` (#56 fixed — `openReview()` writes the ledger entry on all paths)
+3. `GET /api/investigations/{caseId}/compliance-evidence` → assert `sla.workItemId` non-null;
+   extract `taskId = sla.workItemId` (#56 fixed — `openReview()` writes the ledger entry on all paths)
+   // JSON field is "workItemId" — SlaRequirement.workItemId serialized by Jackson as-is
 4. `workItemService.claim(taskId, "compliance-officer-001")` → ASSIGNED
 5. `workItemService.start(taskId, "compliance-officer-001")` → IN_PROGRESS
 6. `workItemService.complete(taskId, "compliance-officer-001", "SAR approved", "APPROVED")`
@@ -590,12 +613,25 @@ New test in `AmlLayer7ResourceTest`:
 
 ### `@QuarkusTest` — reconciliation path
 
+`AmlTrustAttestationRepository` has no `delete()` method. Use JPQL in a `@Transactional`
+test helper — no production code change required:
+
+```java
+@Transactional
+void deleteAttestation(UUID id) {
+    em.createQuery("DELETE FROM AmlTrustRoutingAttestation a WHERE a.id = :id")
+      .setParameter("id", id)
+      .executeUpdate();
+    em.clear(); // flush second-level cache so reconciler sees the gap
+}
+```
+
 1. Start investigation, poll to complete
-2. In `@Transactional` helper: delete one `aml_trust_routing_attestation` row via
-   `AmlTrustAttestationRepository`; call `em.clear()` to flush second-level cache
+2. Query `attestationRepo.findByInvestigationCaseId(caseId)` — pick first entry's `id`.
+   Call `deleteAttestation(id)` — removes the row and clears the cache
 3. `GET /api/investigations/{caseId}/compliance-evidence` → assert `trustRouting.status = PARTIAL`;
-   deleted capability in decisions with `reconstructed = true`
-4. Call evidence again → assert no duplicate reconstructed entry; count still 1
+   deleted capability appears in decisions with `reconstructed = true`
+4. Call evidence endpoint again → assert no duplicate reconstructed entry; count still 1
 
 ---
 
