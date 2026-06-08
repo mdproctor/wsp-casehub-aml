@@ -2,7 +2,7 @@
 
 **Issues:** casehubio/aml#44 (attestation reconciliation), casehubio/aml#55 (SAR officer reviewed)  
 **Branch:** issue-44-attestation-reconciliation  
-**Date:** 2026-06-07
+**Date:** 2026-06-07 (revised 2026-06-08)
 
 ---
 
@@ -24,9 +24,9 @@ No recovery path exists: the missing attestation is permanent unless detected an
 `actorId = "aml-orchestrator"` (system actor). No human actor writes a ledger entry during
 an investigation, so GDPR Art.17 erasure has no real PII to erase.
 
-The compliance officer who approves a SAR is a human actor. Their decision must be recorded
-in the tamper-evident ledger under their identity — both for the audit chain and to give
-GDPR erasure meaningful PII to act on.
+The compliance officer who approves or rejects a SAR is a human actor. Their decision must
+be recorded in the tamper-evident ledger under their identity — for the audit chain and to
+give GDPR erasure meaningful PII to act on.
 
 ---
 
@@ -34,57 +34,79 @@ GDPR erasure meaningful PII to act on.
 
 - Observer failures become visible in the ledger rather than disappearing silently
 - Attestation gaps are filled lazily on evidence read using authoritative `WorkerDecisionEntry` data
-- Status semantics distinguish "all original" (CLOSED) from "gap repaired" (PARTIAL)
-- Officer approval is recorded with the officer's identity as `actorId = HUMAN`
+- Status semantics distinguish: all original (`CLOSED`), observer-failed cap (`PARTIAL`), gap repaired (`PARTIAL`), no data (`GAP`)
+- Officer approval or rejection is recorded with the officer's identity as `actorId = HUMAN`
 - `AuditChainRequirement` covers the full case lifecycle including the officer decision
 - GDPR erasure can be demonstrated against a real human actor
-- Observer hardening applies the PP-20260530-49856c pattern to both new observers
+- Observer hardening applies PP-20260530-49856c to both new observers
 
 ---
 
 ## 3. Data Model Changes
 
-### 3.1 `AmlTrustRoutingAttestation` — `reconstructed` column (V2009)
+### 3.1 `AmlTrustRoutingAttestation` — V2009 changes
+
+Two new columns:
 
 ```sql
 ALTER TABLE aml_trust_routing_attestation
-    ADD COLUMN reconstructed BOOLEAN NOT NULL DEFAULT FALSE;
+    ADD COLUMN reconstructed   BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN observer_failed BOOLEAN NOT NULL DEFAULT FALSE;
 ```
 
-- `false` for all entries written by the live observer (success or failure-record)
-- `true` for entries written by the reconciler to fill gaps
-- Needed to distinguish "score was null at routing time" from "entry was reconstructed later"
-  (both have `trustScoreAtRouting = null`; only the boolean makes this unambiguous)
+**`reconstructed`**: `true` for entries written by the reconciler to fill a gap. Required to
+distinguish "trust score was null at routing time (Phase 0)" from "entry was reconstructed
+later" — both have `trustScoreAtRouting = null`.
 
-### 3.2 `AmlSarOfficerReviewedLedgerEntry` (V2010)
+**`observerFailed`**: `true` for entries written by the observer's outer catch (the failure
+audit record). Required to distinguish a live attestation from a failure-marker in status
+computation. An observer-failure entry for capability X covers X (`PARTIAL`, not `GAP`), but
+must not allow the requirement to reach `CLOSED` — the trust score was never captured.
 
-New `LedgerEntry` subclass. JOINED inheritance per `PP-20260513-ledger-subclass`.
+Partial unique index to prevent multi-JVM double-writes of reconstructed entries:
+
+```sql
+CREATE UNIQUE INDEX UQ_TRUST_ATTEST_CASE_CAP_RECONSTRUCTED
+    ON aml_trust_routing_attestation (investigation_case_id, capability_tag)
+    WHERE reconstructed = TRUE;
+```
+
+The reconciler catches the unique-constraint violation and treats it as idempotent (a peer
+JVM wrote first).
+
+### 3.2 `AmlSarOfficerReviewedLedgerEntry` — V2010
+
+New `LedgerEntry` subclass. JOINED inheritance per PP-20260513-ledger-subclass.
 
 ```sql
 CREATE TABLE aml_sar_officer_reviewed_ledger_entry (
-    id UUID PRIMARY KEY REFERENCES ledger_entry(id),
-    review_decision VARCHAR(20) NOT NULL  -- 'APPROVED' | 'REJECTED'
+    id              UUID    PRIMARY KEY REFERENCES ledger_entry(id),
+    review_decision VARCHAR(20) NOT NULL   -- 'APPROVED' | 'REJECTED'
 );
 ```
 
 Entity:
+
 ```java
 @Entity
 @Table(name = "aml_sar_officer_reviewed_ledger_entry")
 @DiscriminatorValue("AML_SAR_OFFICER_REVIEWED")
 public class AmlSarOfficerReviewedLedgerEntry extends LedgerEntry {
     @Column(name = "review_decision", nullable = false, length = 20)
-    public String reviewDecision;
+    public String reviewDecision;   // "APPROVED" | "REJECTED"
 }
 ```
 
-Standard `LedgerEntry` fields carry the officer identity:
+Standard `LedgerEntry` fields:
 - `actorId` = officer actor ID (from `WorkItemLifecycleEvent.actor()`)
 - `actorType` = `ActorType.HUMAN`
 - `actorRole` = `"ComplianceOfficer"`
-- `subjectId` = `caseId` (same chain as CASE_OPENED and COMPLIANCE_REVIEW_OPENED)
-- `causedByEntryId` = `AmlComplianceReviewLedgerEntry.id` for this case (self-derived)
-- `sequenceNumber` = next in subject chain (via `AmlLedgerService.nextSequenceNumber`)
+- `subjectId` = `caseId` (same chain as `AmlCaseOpenedLedgerEntry` and `AmlComplianceReviewLedgerEntry`)
+- `causedByEntryId` = `AmlComplianceReviewLedgerEntry.id` for this case (self-derived; may be
+  `null` when the engine path has not written `COMPLIANCE_REVIEW_OPENED` — aml#56 not yet
+  fixed. Observer writes the entry anyway; `null causedByEntryId` keeps `auditChain.status`
+  at `PARTIAL` rather than `CLOSED`.)
+- `sequenceNumber` = next in subject chain via `nextSequenceNumber(caseId)`
 
 ---
 
@@ -94,7 +116,8 @@ Standard `LedgerEntry` fields carry the officer identity:
 
 `AmlTrustRoutingObserver.onWorkerDecision()` gains the double-try/catch pattern.
 
-Pre-try block (pure, no DB): derive `attestationSubject`, acquire per-subject lock reference.
+Before the `try` block (pure computation, no DB): derive `attestationSubject`, acquire the
+per-subject lock reference from `subjectLocks`.
 
 ```
 boolean attestationWritten = false;
@@ -102,33 +125,42 @@ try {
     // cache lookup, policy lookup, build entry, synchronized-saveWithSequence
     attestationWritten = true;
 } catch (Exception e) {
-    LOG.warnf(e, "AmlTrustRoutingObserver failed caseId=%s cap=%s", ...);
+    LOG.warnf(e, "AmlTrustRoutingObserver failed caseId=%s cap=%s workerId=%s",
+              event.caseId(), event.capabilityTag(), event.workerId());
     if (!attestationWritten) {
         try {
             attestationRepo.saveObserverFailureEntry(event, attestationSubject);
         } catch (Exception inner) {
-            LOG.errorf(inner, "AUDIT GAP: failure entry also failed caseId=%s cap=%s", ...);
+            LOG.errorf(inner,
+                "AUDIT GAP: observer failure entry also failed caseId=%s cap=%s",
+                event.caseId(), event.capabilityTag());
         }
     }
 }
 ```
 
-**`saveObserverFailureEntry()` on `AmlTrustAttestationRepository`** — new `@Transactional(REQUIRES_NEW)` method. Writes an `AmlTrustRoutingAttestation` with:
-- `actorRole = "AmlInvestigationOrchestrator-observer-failed"` (PP-20260531-11724b naming)
+**`saveObserverFailureEntry()` on `AmlTrustAttestationRepository`** — new
+`@Transactional(REQUIRES_NEW)` method. Writes `AmlTrustRoutingAttestation` with:
+- `actorRole = "AmlInvestigationOrchestrator-observer-failed"` (PP-20260531-11724b)
 - `actorId = "aml-orchestrator"`, `actorType = ActorType.SYSTEM`
-- `trustScoreAtRouting = null`, `thresholdApplied` from policy provider (re-read in new tx)
-- `reconstructed = false`
-- sequence assigned via cross-all-subtypes MAX query (same as `saveWithSequence`)
+- `trustScoreAtRouting = null`, `thresholdApplied = 0.0`
+- `reconstructed = false`, `observerFailed = true`
+- Sequence assigned via `MAX(sequenceNumber) FROM LedgerEntry WHERE subjectId = :sid`
 
-This entry records the observer failure event. The reconciler subsequently detects the
-gap and writes a separate `reconstructed = true` entry — two distinct events in the ledger.
+This entry records the failure event distinctly from both a successful attestation
+(`observerFailed=false`) and a reconciled entry (`reconstructed=true`). It covers the
+capability in status computation but prevents `CLOSED`.
 
 ### 4.2 `AmlTrustRoutingAttestation` model update
 
-Add `reconstructed` field:
+Add the two new fields to the entity, with defaults matching the migration:
+
 ```java
 @Column(name = "reconstructed", nullable = false)
 public boolean reconstructed = false;
+
+@Column(name = "observer_failed", nullable = false)
+public boolean observerFailed = false;
 ```
 
 ### 4.3 `AmlAttestationReconciler` (new `@ApplicationScoped`)
@@ -141,45 +173,84 @@ public List<AmlTrustRoutingAttestation> reconcileIfNeeded(
 ```
 
 Logic:
-1. Build `Set<String> coveredCaps` from existing attestations (any `reconstructed` value)
+
+1. Build `Set<String> coveredCaps` from `existing` (any `reconstructed` or `observerFailed` value)
 2. For each `WorkerDecisionEntry` whose `capabilityTag` is NOT in `coveredCaps`:
-   - Acquire per-subject lock (same `ConcurrentHashMap<UUID,Object>` pattern as the observer)
-   - In a `synchronized` block: call `attestationRepo.saveWithSequence()` with `reconstructed=true`,
-     `trustScoreAtRouting=null` (engine#403 not yet landed),
-     `selectedWorkerId` from the `WorkerDecisionEntry`,
-     `actorRole="AmlInvestigationOrchestrator"`, `actorId="aml-orchestrator"`, `actorType=SYSTEM`
+   - Acquire per-subject lock (same `ConcurrentHashMap<UUID, Object>` pattern as the observer)
+   - In a `synchronized` block: call `attestationRepo.saveWithSequence()` with:
+     - `reconstructed = true`, `observerFailed = false`
+     - `trustScoreAtRouting = decisionEntry.trustScoreAtRouting` (may be null — Phase 0)
+     - `thresholdApplied = decisionEntry.thresholdApplied != null ? decisionEntry.thresholdApplied : 0.0`
+     - `selectedWorkerId = decisionEntry.workerId`
+     - `capabilityTag = decisionEntry.capabilityTag`
+     - `actorRole = "AmlInvestigationOrchestrator"`, `actorId = "aml-orchestrator"`, `actorType = SYSTEM`
+   - On `ConstraintViolationException` (unique index violation): another JVM already
+     reconciled — treat as idempotent, log at DEBUG, continue
    - Add new entry to result list
 3. Return `existing + newly written`
 
-**Idempotent:** coveredCaps check prevents re-reconciling already-covered capabilities,
-including `reconstructed=true` entries from a prior call.
+**Source data note:** `WorkerDecisionEntry.trustScoreAtRouting` and `.thresholdApplied` are
+populated by the engine's `WorkerDecisionEventCapture` from `TrustScoreCache` at event time.
+These are the same values `AmlTrustRoutingObserver` would have captured had it succeeded.
+Reconstruction is therefore faithful — the reconciler doesn't approximate, it uses the
+engine's own captured values. (Note: `thresholdApplied` is `Double` on
+`WorkerDecisionEntry` — nullable — but `double` on `AmlTrustRoutingAttestation` — primitive,
+non-nullable. Null maps to `0.0` for Phase-0 cases where no threshold was applied.)
 
-**`AmlTrustAttestationRepository.saveWithSequence()`** updated to accept `AmlTrustRoutingAttestation`
-with `reconstructed` already set on the entry (caller sets it before passing).
+**Why `AmlTrustRoutingAttestation` still exists alongside `WorkerDecisionEntry`:**
+`WorkerDecisionEntry` is the engine's operational record. `AmlTrustRoutingAttestation`
+is the AML domain's explicit compliance commitment, in its own Merkle chain under a
+namespaced subject (preventing sequence collision with case lifecycle entries). They answer
+different questions: the engine records what happened; AML records its compliance
+accountability.
 
-### 4.4 `AmlComplianceEvidenceService` — `buildTrustRouting()` update
+### 4.4 Status logic
 
-```java
-private TrustRoutingRequirement buildTrustRouting(UUID caseId) {
-    List<WorkerDecisionEntry> dispatched = workerDecisionRepo.findAllByCaseId(caseId);
-    List<AmlTrustRoutingAttestation> raw = attestationRepo.findByInvestigationCaseId(caseId);
-    List<AmlTrustRoutingAttestation> merged = reconciler.reconcileIfNeeded(caseId, dispatched, raw);
-    // ... build RoutingDecisionRecord list from merged ...
-    // ... compute status from merged ...
-}
-```
-
-**Status logic:**
+**`TrustRoutingRequirement` status** (from merged attestation list):
 
 | Condition | Status |
 |---|---|
 | `dispatched.isEmpty()` | `GAP` |
-| All dispatched caps covered by `reconstructed=false` attestations | `CLOSED` |
-| Any dispatched cap covered only by `reconstructed=true` attestation | `PARTIAL` |
-| A cap is in dispatched but has no attestation after reconcile | `PARTIAL` (reconcile write failed) |
+| All dispatched caps have `observerFailed=false, reconstructed=false` attestations | `CLOSED` |
+| Any dispatched cap has only `observerFailed=true` coverage | `PARTIAL` |
+| Any dispatched cap has only `reconstructed=true` coverage | `PARTIAL` |
+| A cap remains uncovered after reconcile (reconcile write also failed) | `PARTIAL` |
 
-**`RoutingDecisionRecord`** gains `boolean reconstructed` field so the API response is
-transparent to the examiner.
+**`RoutingDecisionRecord`** gains two boolean fields: `reconstructed` and `observerFailed`.
+Both are exposed in the API response so an examiner can distinguish authoritative, failed,
+and repaired attestations without inspecting `actorRole`.
+
+### 4.5 `AmlComplianceEvidenceService` changes
+
+Constructor gains a sixth parameter — `AmlAttestationReconciler reconciler`:
+
+```java
+@Inject
+public AmlComplianceEvidenceService(
+        LedgerEntryRepository ledgerRepo,
+        LedgerVerificationService verificationService,
+        AmlTrustAttestationRepository attestationRepo,
+        AmlWorkerDecisionRepository workerDecisionRepo,
+        EntityManager em,
+        AmlAttestationReconciler reconciler) { ... }
+```
+
+`buildTrustRouting()` updated:
+
+```java
+List<WorkerDecisionEntry> dispatched = workerDecisionRepo.findAllByCaseId(caseId);
+List<AmlTrustRoutingAttestation> raw = attestationRepo.findByInvestigationCaseId(caseId);
+List<AmlTrustRoutingAttestation> merged = reconciler.reconcileIfNeeded(caseId, dispatched, raw);
+// compute status from merged using §4.4 logic
+```
+
+**Why lazy on-read rather than a background job or repair endpoint:** The compliance
+evidence endpoint is the natural inspection point — an examiner reading it should see a
+complete picture. Lazy repair ensures the response is self-consistent: gaps are filled
+atomically in the same request. A background job would create a window where a gap is
+visible but not yet repaired. An explicit repair endpoint adds operational ceremony for a
+system with no human operators. The cost is a GET with occasional write side-effects; this
+is explicit in the endpoint contract and acceptable for a compliance inspection surface.
 
 ---
 
@@ -197,85 +268,126 @@ public String openReview(SuspiciousTransaction transaction, InvestigationSummary
 
 `callerRef` changes from `"aml:investigation/" + transaction.id()` to `"aml:investigation:" + caseId`.
 
-This is a breaking change at all call sites — intentional. All callers must be explicit about
-the case identity. The slash-vs-colon separator change also prevents callerRef format confusion.
+Two things change: the separator (`/` → `:`) and the identity (`transaction.id` → `caseId`).
+Both are intentional: `caseId` is the stable investigation UUID (not the external transaction
+reference), and `:` avoids confusion with path-style refs. **In-flight WorkItems** created
+before deployment carry the old `"aml:investigation/"` format and will be silently ignored
+by `AmlWorkItemLifecycleObserver` guard #3. This is a hard cutover with no back-fill — acceptable
+for a tutorial system with no production data.
 
-**Call sites:** both sar-drafting workers in `AmlInvestigationCaseHub`. `caseId` must be
-available in the worker input map. If it is not already injected by `AmlEngineCoordinator`
-into the blackboard initial state, add it there (confirmed during implementation).
+`WorkItemCallerRef` exists in the API if callerRef lookup by prefix is ever needed externally.
+Not needed for this design.
 
 ### 5.2 `AmlWorkItemLifecycleObserver` (new `@ApplicationScoped`)
 
-Observes `WorkItemLifecycleEvent`. Writes `AmlSarOfficerReviewedLedgerEntry` when the
-compliance officer completes the review WorkItem.
+Observes `WorkItemLifecycleEvent`. Handles both `COMPLETED` and `REJECTED` officer decisions.
 
 ```
 @ObservesAsync WorkItemLifecycleEvent event:
-  1. Guard: event.status() != DONE → return
-  2. Guard: event.workItem() == null → LOG.warn, return
-  3. Guard: event.workItem().callerRef not startsWith "aml:investigation:" → return
-  4. Parse caseId = UUID.fromString(callerRef after prefix); catch IAE → LOG.warn, return
+  1. Guard: event.status() not in {COMPLETED, REJECTED} → return
+  2. Guard: event.workItem() == null → LOG.warn("no WorkItem snapshot in event"), return
+  3. Guard: event.workItem().callerRef == null
+             || !event.workItem().callerRef.startsWith("aml:investigation:") → return
+  4. Parse caseId = UUID.fromString(callerRef.substring("aml:investigation:".length()))
+     On IllegalArgumentException: LOG.warn, return
   5. officerId = event.actor() != null ? event.actor() : "unknown-officer"
-  6. reviewDecision = "APPROVED"  (DONE status implies approval for this WorkItem type)
+  6. reviewDecision = event.status() == COMPLETED ? "APPROVED" : "REJECTED"
   7. Apply PP-20260530-49856c:
        boolean written = false;
-       try { amlLedgerService.writeSarOfficerReviewed(caseId, officerId, reviewDecision); written=true; }
-       catch (e) { LOG.warn(...); if (!written) try { amlLedgerService.writeSarOfficerReviewedFailure(caseId, officerId); }
-                                                catch (inner) { LOG.errorf("AUDIT GAP: ..."); } }
+       try {
+           amlLedgerService.writeSarOfficerReviewed(caseId, officerId, reviewDecision);
+           written = true;
+       } catch (Exception e) {
+           LOG.warnf(e, "Failed to write SAR_OFFICER_REVIEWED caseId=%s officer=%s", caseId, officerId);
+           if (!written) {
+               try { amlLedgerService.writeSarOfficerReviewedFailure(caseId, officerId); }
+               catch (Exception inner) {
+                   LOG.errorf(inner, "AUDIT GAP: SAR_OFFICER_REVIEWED observer failure also failed caseId=%s", caseId);
+               }
+           }
+       }
 ```
 
-`@ObservesAsync` — decouples ledger write from the casehub-work transaction that fires the event.
+`@ObservesAsync` — decouples the ledger write from the casehub-work transaction.
+`WorkItemService.complete()` and `.reject()` fire both `lifecycleEvent.fire()` (sync) and
+`lifecycleEvent.fireAsync()` (async). This observer receives the async delivery.
+
+**REJECTED handling:** a rejected SAR is a compliance decision. The examiner must see it in
+the tamper-evident record. Not recording a rejection would leave the audit chain in `PARTIAL`
+permanently after an officer acts. `reviewDecision = "REJECTED"` makes the outcome explicit.
+Both `APPROVED` and `REJECTED` entries move `auditChain.status` to `CLOSED`.
 
 ### 5.3 `AmlLedgerService` additions
 
 **`writeSarOfficerReviewed(UUID caseId, String officerId, String reviewDecision)`**
 
+```
+@Transactional(TxType.REQUIRED)   // starts a new transaction — no transaction is propagated
+                                   // from @ObservesAsync context
+```
+
 Writes `AmlSarOfficerReviewedLedgerEntry`:
 - `actorId = officerId`, `actorType = HUMAN`, `actorRole = "ComplianceOfficer"`
 - `subjectId = caseId`, `sequenceNumber = nextSequenceNumber(caseId)`
-- `causedByEntryId` — self-derived: query `findBySubjectId(caseId)`, find first
-  `AmlComplianceReviewLedgerEntry`, take its `id`
+- `causedByEntryId` — self-derived: query `findBySubjectId(caseId)`, take first
+  `AmlComplianceReviewLedgerEntry.id` (null when engine path + aml#56 unresolved)
 - `reviewDecision = reviewDecision`
 
 **`writeSarOfficerReviewedFailure(UUID caseId, String officerId)`**
 
-Observer failure entry following PP-20260531-11724b:
-- `actorRole = "ComplianceOfficer-observer-failed"`, `actorId = "aml-orchestrator"`, `actorType = SYSTEM`
-- `reviewDecision = "UNKNOWN"`, same subject/sequence logic
+Per PP-20260531-11724b: `actorRole = "ComplianceOfficer-observer-failed"`, `actorId = "aml-orchestrator"`, `actorType = SYSTEM`, `reviewDecision = "UNKNOWN"`.
 
-Both methods are `@Transactional(TxType.REQUIRED)` (run in caller's transaction).
-`writeComplianceReviewOpened()` is already `@Transactional` via `LedgerEntryRepository.save()`.
+```
+@Transactional(TxType.REQUIRED)   // starts a new transaction (no propagated context)
+```
 
 ### 5.4 `AmlComplianceEvidenceService` — include SAR_OFFICER_REVIEWED in audit chain
 
-`findEvidence()` and `build()` already load all `findBySubjectId(caseId)` entries.
-Add a `filterSarOfficerReviewed()` helper (parallel to `filterCaseOpened`, `filterComplianceReview`).
+Add `filterSarOfficerReviewed()` helper (parallel to `filterCaseOpened`, `filterComplianceReview`).
 
-`buildAuditChain()` includes these entries as `"SAR_OFFICER_REVIEWED"` events in the
-`LedgerEventRecord` list. Event record uses `entry.actorId` (the officer) and `entry.actorRole`.
+`buildAuditChain()` includes `AmlSarOfficerReviewedLedgerEntry` entries as `"SAR_OFFICER_REVIEWED"` events in the `LedgerEventRecord` list, using `entry.actorId` (the officer) and `entry.actorRole`.
 
 **`AuditChainRequirement.status` update:**
 
 | Condition | Status |
 |---|---|
 | No AML ledger entries | `GAP` |
-| Case opened + review opened + all linked + at least one officer review | `CLOSED` |
-| All prior conditions except officer review missing | `PARTIAL` |
+| Chain verified + all review entries linked + ≥ 1 officer review entry | `CLOSED` |
+| Case opened + review opened but no officer review yet | `PARTIAL` |
 | Chain not fully verified | `PARTIAL` |
+| `causedByEntryId` null on review or officer entry (aml#56) | `PARTIAL` |
 
-This correctly models a completed investigation: the audit chain is not `CLOSED` until the
-officer has reviewed, matching the actual FinCEN evidence requirement.
+### 5.5 `AmlEngineCoordinator` — inject `caseId` into blackboard initial context
+
+`startInvestigation()` currently puts only `"transaction"` and `"priorEntityContext"` into
+the initial context map. The sar-drafting workers need `caseId` to pass to `openReview()`.
+
+Add:
+
+```java
+initialContext.put("caseId", caseId.toString());
+```
+
+before starting the engine case. Workers extract it as:
+
+```java
+final UUID caseId = UUID.fromString((String) input.get("caseId"));
+```
+
+Both sar-drafting workers (junior and senior) call:
+
+```java
+complianceReviewLifecycle.openReview(tx, buildSummary(input, tx, sarNarrative), caseId)
+```
 
 ---
 
 ## 6. Flyway Migrations
 
-| Version | Path | What |
-|---|---|---|
-| V2009 | `db/aml-trust-routing/migration/` | Add `reconstructed` column to `aml_trust_routing_attestation` |
-| V2010 | `db/aml-ledger/migration/` | Create `aml_sar_officer_reviewed_ledger_entry` join table |
-
-Both run on the qhorus datasource (all AML `LedgerEntry` subclasses use qhorus).
+| Version | Path | Datasource | What |
+|---|---|---|---|
+| V2009 | `db/aml-trust-routing/migration/` | qhorus | Add `reconstructed`, `observer_failed` columns; add partial unique index |
+| V2010 | `db/aml-ledger/migration/` | qhorus | Create `aml_sar_officer_reviewed_ledger_entry` join table |
 
 ---
 
@@ -284,20 +396,41 @@ Both run on the qhorus datasource (all AML `LedgerEntry` subclasses use qhorus).
 ### Unit tests (pure Java, no Quarkus)
 
 **`AmlAttestationReconcilerTest`**
-- 3 dispatched capabilities, 2 existing attestations → reconciler writes 1 `reconstructed=true`; returns merged list of 3
-- All attestations present → reconciler writes nothing; returns original list
-- Idempotency: call twice → still 1 reconstructed entry (not 2)
+- 3 dispatched capabilities, 2 existing attestations (original) → reconciler writes 1 `reconstructed=true`; result has 3 entries
+- All 3 covered → no write; returns original list unchanged
+- Idempotency: call twice → 1 reconstructed entry, not 2 (second call: cap already in coveredCaps)
+- Observer-failed entry present for cap X → reconciler sees X as covered, writes reconstructed entry
+  to replace (no: observer-failed IS in coveredCaps — reconciler skips, X remains PARTIAL not CLOSED)
 
-**`AmlWorkItemLifecycleObserverTest`**  
-- Status `DONE`, valid `aml:investigation:` callerRef → `writeSarOfficerReviewed` called with correct args
-- Status `IN_PROGRESS` → no write
+**`AmlWorkItemLifecycleObserverTest`**
+- `COMPLETED` status + valid `aml:investigation:` callerRef → `writeSarOfficerReviewed("APPROVED")` called
+- `REJECTED` status + valid callerRef → `writeSarOfficerReviewed("REJECTED")` called
+- `IN_PROGRESS` status → no write
 - Null `workItem()` on event → no write, warning logged
 - callerRef for different domain → no write
-- Invalid caseId UUID in callerRef → no write, warning logged
+- Old-format callerRef (`aml:investigation/`) → no write (hard cutover)
+- Invalid UUID in callerRef → no write, warning logged
+- `null` actor → falls back to `"unknown-officer"`
 
 **`AmlComplianceEvidenceServiceTest`**
-- All original attestations → `trustRouting.status = CLOSED`
-- One reconstructed attestation → `trustRouting.status = PARTIAL`, `reconstructed=true` in response
+
+Constructor signature after change (6 args):
+```java
+service = new AmlComplianceEvidenceService(
+        mockLedgerRepo, mockVerificationService,
+        mockAttestationRepo, mockWorkerDecisionRepo,
+        mockEntityManager, mockReconciler);  // new arg
+```
+
+All 5 existing tests require a new `@Mock AmlAttestationReconciler mockReconciler` and a
+`when(mockReconciler.reconcileIfNeeded(any(), any(), any())).thenReturn(raw)` stub in setUp.
+The existing `attestation()` helper creates entries without setting `reconstructed` or
+`observerFailed` — `false` defaults are correct for non-reconstructed originals.
+
+New assertions:
+- All original attestations (`observerFailed=false, reconstructed=false`) → `trustRouting.status = CLOSED`
+- One `observerFailed=true` attestation → `trustRouting.status = PARTIAL`; `observerFailed=true` in `RoutingDecisionRecord`
+- One `reconstructed=true` attestation → `trustRouting.status = PARTIAL`; `reconstructed=true` in record
 - SAR_OFFICER_REVIEWED entry present → `auditChain.status = CLOSED`
 - SAR_OFFICER_REVIEWED missing → `auditChain.status = PARTIAL`
 
@@ -305,43 +438,48 @@ Both run on the qhorus datasource (all AML `LedgerEntry` subclasses use qhorus).
 
 New test in `AmlLayer7ResourceTest`:
 
-1. `POST /api/layer6/investigations` with PEP transaction → get `caseId`
+1. `POST /api/layer6/investigations` with PEP transaction → `caseId`
 2. Poll `GET /api/layer6/investigations/{caseId}` until `status=completed`
-3. `GET /api/investigations/{caseId}/compliance-evidence` → assert `sla.taskId` present; extract it
-4. Claim WorkItem as `"compliance-officer-001"` via `WorkItemService.claim(taskId, "compliance-officer-001")`
-5. Complete WorkItem via `WorkItemService.complete(taskId, ...)` → fires `WorkItemLifecycleEvent`
-6. Await `@ObservesAsync` delivery (poll compliance evidence, or Awaitility with short timeout)
-7. `GET /api/investigations/{caseId}/compliance-evidence` → assert:
-   - `auditChain.events` contains `SAR_OFFICER_REVIEWED` with `actorId = "compliance-officer-001"`
-   - `auditChain.status = CLOSED`
-8. `POST /api/actors/compliance-officer-001/erasure` → assert `200`, `erasedCount >= 1`
-9. `GET /api/investigations/{caseId}/compliance-evidence` → assert SAR_OFFICER_REVIEWED event's
-   `actorId` is pseudonymized (not `"compliance-officer-001"`)
+3. `GET /api/investigations/{caseId}/compliance-evidence` → extract `taskId` from `sla`
+4. `workItemService.claim(taskId, "compliance-officer-001")` → ASSIGNED
+5. `workItemService.start(taskId, "compliance-officer-001")` → IN_PROGRESS
+6. `workItemService.complete(taskId, "compliance-officer-001", "SAR approved", "APPROVED")`
+   (4-param overload: `id, actorId, resolution, outcome`) → fires both sync and async `WorkItemLifecycleEvent`
+7. Await `@ObservesAsync` delivery: poll `GET /api/investigations/{caseId}/compliance-evidence`
+   until `auditChain.events` contains `SAR_OFFICER_REVIEWED`, or Awaitility with ≤5s timeout
+8. Assert `auditChain.events` contains event with `actorId = "compliance-officer-001"` and
+   `actorRole = "ComplianceOfficer"`; assert `auditChain.status = CLOSED`
+9. `POST /api/actors/compliance-officer-001/erasure` → assert 200, `erasedCount >= 1`
+10. `GET /api/investigations/{caseId}/compliance-evidence` → assert SAR_OFFICER_REVIEWED
+    event `actorId` is pseudonymized (not `"compliance-officer-001"`)
 
 ### `@QuarkusTest` — reconciliation path
 
-New test:
 1. Start investigation, poll to complete
-2. Directly delete one `aml_trust_routing_attestation` row from the DB (simulate observer failure)
+2. Delete one `aml_trust_routing_attestation` row for the completed case via injected
+   `AmlTrustAttestationRepository` (or direct `EntityManager` in `@Transactional` helper
+   method); call `em.clear()` after delete to flush second-level cache
 3. `GET /api/investigations/{caseId}/compliance-evidence` → assert `trustRouting.status = PARTIAL`;
-   assert missing capability appears in decisions with `reconstructed = true`
-4. Call evidence again → assert no duplicate reconstruction (idempotent)
+   assert missing capability in decisions with `reconstructed = true`
+4. Call evidence endpoint again → assert no duplicate reconstructed entry; `reconstructed=true`
+   count for that capability is still 1
 
 ---
 
 ## 8. Out of Scope (tracked separately)
 
-- **aml#56** — engine path not writing `COMPLIANCE_REVIEW_OPENED` (`sla.status` always `GAP`)
-- **engine#403** — `WorkerDecisionEntry` missing `trustScoreAtRouting`; until landed,
-  reconstructed attestations will always have `trustScoreAtRouting = null`
+- **aml#56** — engine path not writing `COMPLIANCE_REVIEW_OPENED`; `sla.status` always `GAP`
+  when running via engine path. `causedByEntryId` on `AmlSarOfficerReviewedLedgerEntry` will
+  be null; audit chain stays `PARTIAL`.
 
 ---
 
 ## 9. Platform Coherence Review
 
 - Ledger subclass rule (PP-20260513): JOINED inheritance ✅, V2009/V2010 numbering ✅, consumer-owned migrations ✅
-- Observer failure pattern (PP-20260530-49856c): both new observers apply double try/catch ✅
+- Observer failure pattern (PP-20260530-49856c): both observers apply double try/catch ✅
 - Observer failure naming (PP-20260531-11724b): `actorRole = "<role>-observer-failed"` ✅
 - Application-tier rule: all logic requires AML domain knowledge ✅
 - Dual-trail audit pattern: `WorkItemLifecycleEvent` path maintains both operational and compliance record ✅
+- Multi-JVM idempotency: partial unique index on `(investigation_case_id, capability_tag) WHERE reconstructed = TRUE` ✅
 - No foundation primitives re-implemented ✅
