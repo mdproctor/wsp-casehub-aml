@@ -22,7 +22,7 @@ CI green. 142 tests pass.
 
 Run `/work` to start **#42 (ActionRiskClassifier)** or **#57 (production partial unique index for `UQ_TRUST_ATTEST_CASE_CAP_RECONSTRUCTED`)**.
 
-Check `casehubio/engine#402` state before #42 — ActionRiskClassifier platform SPI in progress there.
+`casehubio/engine#402` (ActionRiskClassifier SPI) is now **CLOSED** — platform SPI is shipped; #42 is unblocked.
 
 ## What's left
 
@@ -35,7 +35,7 @@ Check `casehubio/engine#402` state before #42 — ActionRiskClassifier platform 
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
-| #42 | ActionRiskClassifier oversight gate for consequential AML actions | M | Med | Check casehubio/engine#402 status first |
+| #42 | ActionRiskClassifier oversight gate for consequential AML actions | M | Med | engine#402 CLOSED — unblocked |
 | #14 | Layer 9 — LLM supervisor mode (investigation triage) | L | High | Needs engine#101 (LlmPlanningStrategy); CaseContextProvider → engine#419 |
 
 ## References
