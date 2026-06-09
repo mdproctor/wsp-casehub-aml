@@ -470,7 +470,7 @@ this branch.** Reference #42 as context.
 - Wrong "comes in transitively" comment corrected ✓
 - YAML has full goal/binding/completion blocks with explicit when: conditions ✓
 - YAML output keys (`entityLinkProposal`, `investigationSummary`) explicit ✓
-- GET completion check uses `AmlWorkerDecisionRepository` + "investigation-summary" tag ✓
+- GET completion check uses `CaseInstanceCache` (engine state) rather than `AmlWorkerDecisionRepository` — resilient to concurrent H2 `ledger_subject_sequence` INSERT race that causes `WorkerDecisionEntry` saves to fail under casehub-work SNAPSHOT regression (aml#59) ✓
 - `AmlOversightCoordinator` listed as required class ✓
 - Gate WorkItem poll uses default-PU EntityManager (WorkItem on default datasource) ✓
 - Layer 9 isolation: existing tests unaffected ✓
