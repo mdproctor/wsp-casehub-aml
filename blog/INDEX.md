@@ -2,6 +2,7 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-06-09-mdp01-when-the-examiner-looks.md](2026-06-09-mdp01-when-the-examiner-looks.md) | 2026-06-09 | Observer failures now write audit records, lazy reconciliation fills gaps, GDPR officer-reviewed flow complete |
 | [2026-06-07-mdp01-green-after-a-month.md](2026-06-07-mdp01-green-after-a-month.md) | 2026-06-07 | CI unblocked: Maven Central 403, two IDX_LEDGER_ENTRY_SUBJECT_SEQ bugs, qhorus#253, WorkerResult API change |
 | [2026-06-02-mdp01-seven-layers-thirteen-sections.md](2026-06-02-mdp01-seven-layers-thirteen-sections.md) | 2026-06-02 | ARC42STORIES.MD bootstrap — mode-first approach, 7 layers migrated, 3 extra gotchas from blogs |
 | [2026-05-25-mdp01-parallel-by-default.md](2026-05-25-mdp01-parallel-by-default.md) | 2026-05-25 | Layer 5: YAML bindings + programmatic workers, parallel dispatch by default, UUID identity fix, WORKER_SCHEDULED metadata |
