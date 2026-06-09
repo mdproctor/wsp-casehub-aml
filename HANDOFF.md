@@ -1,47 +1,46 @@
-# Handoff — CI green after a month (2026-06-07)
+# Handoff — Layer 9: attestation reconciliation + SAR officer reviewed (2026-06-09)
 
 ## What this project is
 
 *Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
-## This session (2026-06-05 → 2026-06-07)
+## This session (2026-06-07 → 2026-06-09)
 
-CI had been red since May 12. Three separate bugs were uncovered once the build barrier dropped:
+Issues #44, #55, and #56 implemented and merged to main.
 
-1. **Maven Central 403** (#52): AML had no local `quarkus-bom` import — Maven hit GitHub Packages (with Bearer token) before Central, causing 403. Fixed by pinning `quarkus.platform.version` locally and adding the BOM to AML's own `dependencyManagement`. Added `cache: 'maven'` to CI workflow.
+1. **#56 — engine path never wrote COMPLIANCE_REVIEW_OPENED**: `ComplianceReviewLifecycle.openReview()` now writes the ledger entry internally, so both the Layer 3 sync path and the engine (Quartz) path always write it. `caseId` is obtained from `WorkerExecutionContext.current().caseId()` — not `caseHub.signal()` which turned out to be async (Vert.x event bus, fire-and-forget).
 
-2. **Attestation sequence conflict** (#53): `AmlTrustRoutingAttestation` shared `caseId` as ledger subject with engine + AML domain entries. `nextSequenceNumber()` was scoped to attestation rows only, missed the case-opened entry at seq=1. Fixed with: (a) dedicated namespaced subject `UUID.nameUUIDFromBytes("aml-trust-routing-attestation:" + caseId)`, (b) per-subject lock held outside the transaction so REQUIRES_NEW commits before the next writer reads max.
+2. **#44 — observer failure reconciliation**: `AmlTrustRoutingObserver` hardened with PP-20260530-49856c double-try/catch — failures write `observerFailed=true` entries instead of disappearing silently. New `AmlAttestationReconciler` fills attestation gaps lazily on compliance evidence read, copying authoritative data from `WorkerDecisionEntry`.
 
-3. **qhorus dtype-scope bug** (qhorus#253): `MessageLedgerEntryRepository.findLatestBySubjectId()` queried `FROM MessageLedgerEntry` — invisible to AML domain entries sharing the same subject. Filed + resolved upstream as a re-architecture: new `LedgerEntryJpaRepository` using `FROM LedgerEntry`.
+3. **#55 — SAR officer reviewed / GDPR demo**: New `AmlSarOfficerReviewedLedgerEntry` + `AmlWorkItemLifecycleObserver` writes the officer's decision (APPROVED/REJECTED) with the officer's human `actorId`. GDPR Art.17 erasure now has real PII to act on. Full test: start investigation → officer approves WorkItem → erase officer actorId → verify pseudonymized.
 
-4. **WorkerResult API** (#54): engine SNAPSHOT changed `Worker.Builder.function()` return type to `WorkerResult`. All 7 workers in `AmlInvestigationCaseHub` updated to `WorkerResult.of(Map.of(...))`.
+Post-merge: casehub-ledger SNAPSHOT added `tenancyId` to all `LedgerEntryRepository` and `LedgerVerificationService` methods. All AML call sites updated to `TenancyConstants.DEFAULT_TENANT_ID`. CLAUDE.md updated.
 
-casehubio/aml CI is green. CLAUDE.md updated with ledger subject isolation convention and WorkerResult note.
+CI green. 142 tests pass.
 
 ## Immediate next step
 
-Run `/work` to start **#42 (ActionRiskClassifier)** or **#44 (observer failure reconciliation)**.
+Run `/work` to start **#42 (ActionRiskClassifier)** or **#57 (production partial unique index for `UQ_TRUST_ATTEST_CASE_CAP_RECONSTRUCTED`)**.
 
-Check `casehubio/engine#402` state before #42 — ActionRiskClassifier platform SPI is in progress there.
+Check `casehubio/engine#402` state before #42 — ActionRiskClassifier platform SPI in progress there.
 
 ## What's left
 
-- `issue-13-remove-test-workarounds` workspace branch — overdue, no project counterpart · XS · Low
-- `issue-26-re-enable-flyway` workspace branch — overdue, no project counterpart · XS · Low
-- Deferred GDPR demo: `AML_SAR_OFFICER_REVIEWED` ledger event — casehubio/aml#44 · S · Low
-- 11 other stale workspace branches (see epic hygiene) — all correspond to closed issues; safe to delete
+- `issue-13-remove-test-workarounds` workspace branch — closed issue, delete · XS · Low
+- `issue-16-23-28-22-aml-test-batch` workspace branch — open, last commit 2 weeks ago, no project counterpart · XS · Low
+- Stale workspace branches (closed): issue-26, issue-17, issue-30 — all past deletion date · XS · Low
+- aml#57 — apply partial unique index `UQ_TRUST_ATTEST_CASE_CAP_RECONSTRUCTED` on production PostgreSQL (dropped from V2009 — H2 limitation) · XS · Low
 
 ## What's next
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
 | #42 | ActionRiskClassifier oversight gate for consequential AML actions | M | Med | Check casehubio/engine#402 status first |
-| #44 | Observer failure reconciliation — detect missing trust attestations at case close | M | Med | Silent evidence gaps |
 | #14 | Layer 9 — LLM supervisor mode (investigation triage) | L | High | Needs engine#101 (LlmPlanningStrategy); CaseContextProvider → engine#419 |
 
 ## References
 
-- Architecture record: `ARC42STORIES.MD` (project root)
-- Garden entries: GE-20260607-3747a1 (Maven Central 403), GE-20260607-1c0a05 (ledger dtype scope), GE-20260607-f0c53e (ARJUNA cascade), GE-20260607-b6d999 (ledger subject isolation), GE-20260607-067ace (lock-outside-tx), GE-20260607-200500 (H2 constraint phantom)
-- qhorus fix: casehubio/qhorus#253 — LedgerEntryJpaRepository re-architecture
-- Blog: `blog/2026-06-07-mdp01-green-after-a-month.md`
+- Architecture record: `ARC42STORIES.MD` (project root) — 2 stale entries fixed this session
+- Blog: `blog/2026-06-09-mdp01-when-the-examiner-looks.md`
+- Garden entries: GE-20260609-ddd4b8 (CaseHub.signal async), GE-20260609-84290d (WorkItemLifecycleEvent.source()), GE-20260609-bc8704 (H2 partial index), GE-20260609-45bd4c (@ActivateRequestContext Quartz)
+- API break: `LedgerEntryRepository`/`LedgerVerificationService` now require `tenancyId` — use `TenancyConstants.DEFAULT_TENANT_ID`
