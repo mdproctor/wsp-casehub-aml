@@ -1,39 +1,42 @@
-# Handoff — Layer 9 closed (2026-06-16)
+# Handoff — CI fix: ledger SNAPSHOT adaptation (2026-06-17/18)
 
 ## What this project is
 
-*Unchanged — `git show HEAD~3:HANDOFF.md` §What this project is*
+*Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
-## This session (2026-06-10 → 2026-06-16)
+## This session (2026-06-17 → 2026-06-18)
 
-Layer 9 (`AmlActionRiskClassifier`, #42 + #57) shipped, merged, squashed, and closed.
+AML CI was red due to cascading ledger SNAPSHOT changes from the fix/#148 branch:
 
-Five cascading SNAPSHOT adaptations required before CI went green:
-1. `WorkItemLifecycleEvent.fromWire()` 12-param API (casehub-work SNAPSHOT)
-2. `domainContentBytes()` enforcement on all `@Entity LedgerEntry` subclasses (casehub-ledger feat/#128)
-3. Timer job renames: `ExpiryCleanupJob`→`ExpiryTimerJob`, `ClaimDeadlineJob`→`ClaimDeadlineTimerJob`
-4. `TenantScopedPrincipal` CDI exclusion — must be in BOTH main and test `application.properties` (quarkus:build uses main classpath only)
-5. `AmlAttestationReconciler` missing `tenancyId` on reconstructed entries (hidden by engine#491 until investigations completed)
+1. **Root cause diagnosed:** `ledger_subject_sequence` `PK` violated under concurrent Quartz workers — ledger's `LedgerSequenceAllocator.h2NextSequenceNumber()` used `MERGE INTO` which is not atomic for concurrent first-inserts in H2 2.x MVStore (MVCC). `LOCK_MODE=1` was tried and confirmed ineffective (MVStore ignores it). Fix required `INSERT ON CONFLICT DO NOTHING` + `UPDATE` in the ledger.
 
-engine#491 (investigations never completing) filed and fixed by the engine session. ledger#130 (SYSTEM actor tokenisation exemption) changed `eraseActor_systemActor` test expectation to `mappingFound=false`.
+2. **Ledger fixed:** Filed `ledger#148`, ledger session applied fix at `5dc77ad`, pushed to `casehubio/ledger` at `19634f3` → `38d9f20`.
 
-Also: ADR-0003 (AmlActionType as gate metadata authority), protocol PP-20260615-d274cc (TenantScopedPrincipal exclusion), parent#252 filed (casehub-aml.md missing Layer 9 capabilities).
+3. **Cascading SNAPSHOT breaks in AML:**
+   - `TrustScoreCache` (removed) → `TrustScoreSource` SPI (`@DefaultBean`: `MaterializedTrustScoreSource`, reads DB fresh)
+   - `LedgerErasureService.erase()` → now requires `ErasureReason` (second param)
+   - `ActorIdentityProvider` moved to `api.spi` — affected qhorus too (filed `qhorus#285`, fixed at `c15807e`)
+   - `LedgerHealthJob.checkSequenceGaps()` JPQL broken by Hibernate 6 stricter type checking (filed `ledger#153`, background timer, doesn't fail CI)
+   - `BlackboardEventCodecRegistrar.onStart()` fires twice in some local `@QuarkusTest` contexts due to locally-installed engine WIP at `01:54` local build (filed `engine#533`, local-only, CI uses May-29 GitHub Packages blackboard)
+
+4. **AML adapted and pushed:** `a3fcb83` — all five affected files updated. CI queued at `a3fcb83`.
 
 ## Immediate next step
 
-Branch is closed. Start **#14 (Layer 10 — LLM triage supervisor)** once engine#101 (LlmPlanningStrategy SPI) lands.
+Wait for CI at `a3fcb83` to complete — should go green. If it fails, check `gh run view` for the new failure category (unlikely with the published blackboard version).
+
+Then: start **#14 (Layer 10 — LLM triage supervisor)** once engine#101 (LlmPlanningStrategy SPI) lands.
 
 ## What's left
 
-| # | Description | Scale | Complexity | Blocked by | Notes |
-|---|-------------|-------|------------|------------|-------|
-| #14 | Layer 10 — LLM supervisor mode (investigation triage) | L | High | engine#101 (LlmPlanningStrategy) | CaseContextProvider → engine#419 |
+| # | Description | Scale | Complexity | Notes |
+|---|-------------|-------|------------|-------|
+| #14 | Layer 10 — LLM supervisor mode (investigation triage) | L | High | Blocked on engine#101 (LlmPlanningStrategy); CaseContextProvider → engine#419 |
+| — | engine#533 | XS | Low | BlackboardEventCodecRegistrar double-registration — local only, won't affect CI |
+| — | ledger#153 | XS | Low | LedgerHealthJob JPQL fix — background timer, low priority |
 
 ## References
 
-- Blog: `blog/2026-06-15-mdp01-five-days-to-the-other-side-of-a-snapshot.md`
-- ADR: `docs/adr/0003-amlactiontype-as-gate-metadata-authority.md`
-- Protocol: PP-20260615-d274cc
-- Garden: GE-20260615-ffff65 (SNAPSHOT divergence), GE-20260531-70e07c REVISE, GE-20260601-60efe8 REVISE
-- Outstanding: parent#252 (casehub-aml.md Layer 9 capabilities), #14 (LLM triage — engine#101)
-- Architecture record: `ARC42STORIES.MD` + `LAYER-LOG.md` — Layer 9 entry written
+- Garden: GE-20260618-0ed34c (H2 LOCK_MODE=1 ineffective with MVStore)
+- Filed: ledger#148 (sequence race fix — closed), ledger#153 (LedgerHealthJob JPQL), engine#533 (blackboard codec), qhorus#285 (ActorIdentityProvider — closed)
+- AML commit: `a3fcb83` fix: adapt to casehub-ledger SNAPSHOT
