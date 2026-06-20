@@ -1,3 +1,5 @@
+*Updated: ledger#153, engine#533 closed — removed from backlog.*
+
 # Handoff — CI fix: ledger SNAPSHOT adaptation (2026-06-17/18)
 
 ## What this project is
@@ -32,8 +34,6 @@ Then: start **#14 (Layer 10 — LLM triage supervisor)** once engine#101 (LlmPla
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
 | #14 | Layer 10 — LLM supervisor mode (investigation triage) | L | High | Blocked on engine#101 (LlmPlanningStrategy); CaseContextProvider → engine#419 |
-| — | engine#533 | XS | Low | BlackboardEventCodecRegistrar double-registration — local only, won't affect CI |
-| — | ledger#153 | XS | Low | LedgerHealthJob JPQL fix — background timer, low priority |
 
 ## References
 
