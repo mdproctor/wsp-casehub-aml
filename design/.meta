@@ -1,0 +1,9 @@
+branch: issue-63-xs-xm-batch-fixes
+project-sha: bb60a368d423f18620111a0c98709f222f4427ba
+date: 2026-06-21
+issue: 63
+issue-repo: casehubio/aml
+covers: 63,48,52,47,54,59,49,45
+flyway-next-v: unknown
+design-repo: workspace
+design-section-hashes: 
