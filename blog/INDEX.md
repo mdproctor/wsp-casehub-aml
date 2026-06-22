@@ -2,6 +2,7 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-06-22-mdp01-cache-gaps-and-workflow-context.md](2026-06-22-mdp01-cache-gaps-and-workflow-context.md) | 2026-06-22 | Cache eviction fallback + FuncWorkflowBuilder migration — why the flow path doesn't set WorkerExecutionContext |
 | [2026-06-15-mdp01-five-days-to-the-other-side-of-a-snapshot.md](2026-06-15-mdp01-five-days-to-the-other-side-of-a-snapshot.md) | 2026-06-15 | Five cascading SNAPSHOT regressions after Layer 9 shipped — each one hiding the next |
 | [2026-06-09-mdp01-when-the-examiner-looks.md](2026-06-09-mdp01-when-the-examiner-looks.md) | 2026-06-09 | Observer failures now write audit records, lazy reconciliation fills gaps, GDPR officer-reviewed flow complete |
 | [2026-06-07-mdp01-green-after-a-month.md](2026-06-07-mdp01-green-after-a-month.md) | 2026-06-07 | CI unblocked: Maven Central 403, two IDX_LEDGER_ENTRY_SUBJECT_SEQ bugs, qhorus#253, WorkerResult API change |
