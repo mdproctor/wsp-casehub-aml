@@ -3,7 +3,7 @@
 **Issue:** casehubio/aml#66
 **Branch:** issue-66-sar-workers-flow
 **Date:** 2026-06-23
-**Status:** Approved
+**Status:** Approved (revised after review)
 
 ## Context
 
@@ -11,10 +11,32 @@
 (WorkerFunction.Flow) in casehubio/aml#46. The two SAR drafting workers were left as
 `WorkerFunction.Sync` (raw lambda) because `DefaultWorkerExecutor.executeFlow()` did not call
 `WorkerExecutionContext.set(context)`, causing `WorkerExecutionContext.current().caseId()` to
-return null inside FuncDSL lambdas.
+return null inside FuncDSL lambdas. (Confirmed via bytecode inspection — see blog
+`2026-06-22-mdp01-cache-gaps-and-workflow-context.md`.)
 
 `casehubio/engine#559` is now closed. `executeFlow` now sets `WorkerExecutionContext` before
 delegating to `FlowWorkerExecutor`, matching the behaviour of `executeSync`. The blocker is gone.
+
+## Pre-requisite: Confirm engine SNAPSHOT includes engine#559
+
+**This step gates integration test execution.** The local M2 SNAPSHOT jars
+(`casehub-engine` and `casehub-engine-flow`) are timestamped 2026-06-23 03:36–03:38. Engine#559
+was confirmed closed after that timestamp; the local jars likely predate the fix.
+
+Before running `AmlLayer6InvestigationTest`, force-refresh the SNAPSHOT:
+
+```bash
+mvn -U dependency:resolve -pl app -am -q
+```
+
+If the fix is not yet published (CI may still be running), the unit test will pass (it checks
+only `WorkerFunction.Flow.class` instance type), but `AmlLayer6InvestigationTest` will fail with
+an opaque Awaitility timeout — `WorkerExecutionContext.current()` still returns null, causing an
+NPE inside the SAR lambda, causing the engine case to fail, causing the poll to never see
+`status=completed`.
+
+**Wait for the updated SNAPSHOT before running Layer 6 integration tests if force-refresh does
+not produce a jar newer than 03:38.**
 
 ## Scope
 
@@ -24,6 +46,7 @@ Files changed in `app/`:
 |------|--------|
 | `AmlInvestigationCaseDescriptor.java` | Migrate 2 workers; update Javadoc |
 | `AmlInvestigationCaseDescriptorTest.java` | Change SAR worker assertion from `Sync` to `Flow`; update comments |
+| `CLAUDE.md` | Update misleading `Worker.Builder.function()` return type note |
 
 Project root:
 
@@ -36,6 +59,13 @@ Outside `app/`:
 | Artifact | Change |
 |----------|--------|
 | Garden entry `GE-20260609-ddd4b8` | Revise stale ⚠️ caveat to resolved note |
+
+New issues to file:
+
+| Repo | Description |
+|------|-------------|
+| `casehubio/aml` | Migrate `entityResolutionWorker` + `investigationSummaryWorker` in `AmlOversightCaseHub` to FuncWorkflowBuilder (PP-20260531 compliance — these use single-arg `WorkerResult.of(Map)` and are not blocked) |
+| `casehubio/engine` | Add PlannedAction support to FlowWorkerExecutor / FuncDSL — needed to unblock `entityLinkProposalWorker` migration in `AmlOversightCaseHub` (see §6 for constraint detail) |
 
 ## §1 — Migration
 
@@ -66,7 +96,8 @@ migrated workers. Because the SAR workers capture instance fields (`objectMapper
 ```
 
 Key differences from Sync:
-- `WorkerResult.of(...)` wrapper removed — `FlowWorkerExecutor` wraps the `Map` return internally
+- `WorkerResult.of(...)` wrapper removed — `executeFlow` calls `model.asMap()` on the workflow
+  output and wraps it as `WorkerResult` internally. The flow path owns the wrapping.
 - `WorkerExecutionContext.current().caseId()` is now safe in the flow path (engine#559)
 - Instance fields captured by closure; lambda body is otherwise identical
 
@@ -91,7 +122,27 @@ Remove the "blocked on engine" language from three locations:
 The "Runs on a Quartz worker thread; JPA calls via ComplianceReviewLifecycle are safe here"
 note on the junior worker remains accurate — the Flow executor runs on the same Quartz thread.
 
-## §3 — Garden Entry Update
+## §3 — CLAUDE.md Note
+
+The current note reads:
+
+> "Engine worker return type: `Worker.Builder.function()` requires
+> `Function<Map<String, Object>, WorkerResult>`. Return `WorkerResult.of(Map.of(...))` — not
+> `Map.of(...)` directly. Applies to all `YamlCaseHub` worker lambdas (casehubio/aml#54)."
+
+After this migration, `AmlInvestigationCaseDescriptor` workers return `Map.of(...)` directly in
+the flow path. "Applies to all YamlCaseHub worker lambdas" is now false for seven workers (five
+already migrated, two migrated in this issue). A developer adding a new worker following this
+note would incorrectly wrap with `WorkerResult.of()` in a Flow worker.
+
+Update to:
+
+> "Return type by execution model: `WorkerFunction.Sync` (raw lambda) workers — e.g.
+> `AmlOversightCaseHub` — must return `WorkerResult.of(Map.of(...))`. `WorkerFunction.Flow`
+> (FuncWorkflowBuilder) workers return `Map<String, Object>` directly; `executeFlow` calls
+> `model.asMap()` and wraps internally. Do not wrap Flow worker returns."
+
+## §4 — Garden Entry Update
 
 File: `GE-20260609-ddd4b8.md` in `~/.hortora/garden/jvm/casehub-engine/`
 
@@ -100,12 +151,7 @@ resolved note:
 
 **Replace:**
 > ⚠️ Caveat — `WorkerFunction.Flow` (FuncWorkflowBuilder) workers: `WorkerExecutionContext.current()`
-> returns `null` inside FuncDSL lambdas. `DefaultWorkerExecutor.executeFlow()` does not call
-> `WorkerExecutionContext.set()` before delegating to `FlowWorkerExecutor` — only `executeSync()`
-> and `executeAgentSync()` set it. Workers migrated to `FuncWorkflowBuilder` that call
-> `WorkerExecutionContext.current()` will get NPE at runtime. Either keep such workers as
-> `WorkerFunction.Sync`, or request the engine team to add `WorkerExecutionContext.set(context)`
-> in `executeFlow()`. (casehub-aml#66)
+> returns `null` inside FuncDSL lambdas...
 
 **With:**
 > ✅ Resolved (engine#559, 2026-06-23) — `DefaultWorkerExecutor.executeFlow()` now calls
@@ -113,7 +159,7 @@ resolved note:
 > the behaviour of `executeSync()`. `WorkerExecutionContext.current().caseId()` is safe inside
 > FuncDSL lambdas. See casehubio/aml#66 for the AML migration that removed the Sync workaround.
 
-## §4 — Tests
+## §5 — Tests
 
 ### Unit test (change in AmlInvestigationCaseDescriptorTest)
 
@@ -121,17 +167,10 @@ resolved note:
 SAR workers are `WorkerFunction.Sync`. This is the TDD red signal — the test fails after the
 migration until updated.
 
-Change the SAR worker branch from:
-```java
-} else if (sarWorkers.contains(w.getName())) {
-    assertInstanceOf(WorkerFunction.Sync.class, w.getFunction(),
-            "SAR worker " + w.getName() + " must remain Sync until engine"
-                    + " provides WorkerExecutionContext in the flow path (#66).");
-}
-```
+Collapse the two-set structure into one unified set (all 7 workers are now Flow):
 
-To (merge `sarWorkers` into `pureComputationWorkers` — all 7 workers now use Flow):
 ```java
+// All 7 workers now use WorkerFunction.Flow per PP-20260531-worker-func-exec
 final Set<String> allWorkers = Set.of(
         "entity-resolution-agent",
         "pattern-analysis-agent",
@@ -151,45 +190,78 @@ for (final Worker w : descriptor.workers()) {
 }
 ```
 
-Update the comment at the top of the test from the "SAR drafting workers remain Sync pending..."
-note to reflect that all workers now use Flow per PP-20260531-worker-func-exec.
+Remove the comment "SAR drafting workers remain Sync pending engine WorkerExecutionContext
+support (#66)" — it is no longer true.
 
-### Integration tests (existing, no changes)
+### Integration test (existing, no changes)
 
-The Layer 6 `@QuarkusTest` and Layer 9 `@QuarkusTest` both drain to `status=completed` and
-verify `complianceTaskId` is present in the outcome. These tests exercise the full SAR
-drafting path and will catch any behavioural regression from the migration.
+`AmlLayer6InvestigationTest` exercises the full SAR drafting path, including
+`WorkerExecutionContext.current().caseId()`. It does not explicitly assert `complianceTaskId` —
+coverage is implicit: if `WorkerExecutionContext.current()` returns null, `caseId()` throws NPE,
+the engine case fails, and the test times out at the `status=completed` poll. This is the
+regression net for the migration — a passing Layer 6 test confirms the flow path is wired
+correctly end-to-end.
 
-Run with:
+Layer 9 (`AmlLayer9ActionGateTest`, `AmlLayer9ResourceTest`) tests `AmlOversightCaseHub` — no
+SAR workers, no `complianceTaskId`, no coverage of this migration. Do not include Layer 9 tests
+in migration validation.
+
+Run validation:
 ```bash
+# Unit test first (fast, no SNAPSHOT dependency)
 mvn test -pl app -am -Dtest=AmlInvestigationCaseDescriptorTest -Dsurefire.failIfNoSpecifiedTests=false
-mvn test -pl app -am -Dtest=AmlLayer6InvestigationIT -Dsurefire.failIfNoSpecifiedTests=false
+
+# Integration test — only after confirming engine SNAPSHOT includes engine#559 (see Pre-requisite)
+mvn test -pl app -am -Dtest=AmlLayer6InvestigationTest -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-## §5 — ARC42STORIES.MD
+## §6 — ARC42STORIES.MD
 
 Three stale references to update:
 
-**Line ~1050** (§9.4 Layer 5 descriptor):
-Change "...+ 2 SAR drafting workers as `WorkerFunction.Sync` (pending `WorkerExecutionContext`
-support in `executeFlow` — aml#66)" to "...+ 2 SAR drafting workers migrated to
-`WorkerFunction.Flow` in aml#66 (engine#559 resolved `WorkerExecutionContext` in flow path)".
+**Line ~1050** (§9.4 Layer 5 descriptor bullet):
+Collapse "5 Flow + 2 Sync" framing — the distinction was meaningful only while the migration was
+blocked. Now all 7 use Flow:
+> "...carries all 7 workers as `WorkerFunction.Flow` (FuncWorkflowBuilder per PP-20260531; SAR
+> workers migrated in aml#66 after engine#559 fixed `WorkerExecutionContext` in `executeFlow`);
+> testable without Quarkus; per protocol PP-20260518"
 
 **Line ~1060** (Layer 5 narrative):
-Change "Two SAR drafting workers remain `WorkerFunction.Sync`..." to "All 7 workers now use
-`WorkerFunction.Flow` (FuncWorkflowBuilder per PP-20260531). Engine#559 fixed
-`WorkerExecutionContext` propagation in `executeFlow` (aml#66)."
+> "All 7 workers use `WorkerFunction.Flow` (FuncWorkflowBuilder per PP-20260531). SAR drafting
+> workers migrated in aml#66 — engine#559 added `WorkerExecutionContext.set(context)` in
+> `DefaultWorkerExecutor.executeFlow()`. `AmlOversightCaseHub` workers remain `WorkerFunction.Sync`
+> pending engine PlannedAction support in flow path (aml#NNN, engine#NNN)."
 
 **Line ~1462** (§12 risks/debt table):
-Row for "Raw worker lambdas in AmlInvestigationCaseDescriptor":
-Change status from "Partially resolved — 5/7 workers migrated..." to "✅ Resolved — all 7
-workers use `WorkerFunction.Flow` (aml#46 + aml#66). Engine#559 fixed the flow-path
-`WorkerExecutionContext` gap."
+Change status from "Partially resolved..." to:
+> "✅ Resolved — all 7 workers in `AmlInvestigationCaseDescriptor` use `WorkerFunction.Flow`
+> (aml#46 + aml#66). `AmlOversightCaseHub` workers tracked separately (aml#NNN, aml#NNN)."
 
-## Out of Scope
+## §7 — AmlOversightCaseHub: Scope Boundary and Constraint
 
-- CLAUDE.md note about `Worker.Builder.function()` requiring `WorkerResult.of(...)` —
-  that note covers the raw lambda path (Sync), which still applies to other workers
-  (e.g., in `AmlOversightCaseHub`). No change needed.
-- LAYER-LOG.md — no layer opened or closed; this migration completes a known item within Layer 5.
-  The ARC42STORIES.MD update (§5 above) covers the layer record sufficiently.
+`AmlOversightCaseHub` has three workers, all currently `WorkerFunction.Sync` — a PP-20260531
+violation. Two are NOT blocked by this issue and should be tracked separately:
+
+| Worker | Return type | Status |
+|--------|-------------|--------|
+| `oversight-entity-resolution-agent` | `WorkerResult.of(Map)` — single arg | **Migratable now** |
+| `oversight-investigation-summary-agent` | `WorkerResult.of(Map)` — single arg | **Migratable now** |
+| `oversight-entity-link-proposal-agent` | `WorkerResult.of(Map, PlannedAction)` — two args | **Blocked** |
+
+`entityLinkProposalWorker` is blocked because `executeFlow` calls `model.asMap()` on the
+workflow output — only the Map is surfaced, the `PlannedAction` has no pathway through the
+FuncDSL chain. If migrated as-is, the PlannedAction is silently lost and the oversight gate
+never fires.
+
+The right fix is an engine-side change: FuncDSL needs a mechanism to attach a PlannedAction
+to a function task — e.g., `function(lambda, Map.class).withPlannedAction(actionFn)` — so
+`FlowWorkerExecutor` can include it in the wrapped `WorkerResult`. This requires a new engine
+issue.
+
+**Actions:**
+1. File `casehubio/aml` issue: migrate `entityResolutionWorker` + `investigationSummaryWorker`
+   in `AmlOversightCaseHub` to FuncWorkflowBuilder (unblocked, PP-20260531 compliance)
+2. File `casehubio/engine` issue: add PlannedAction support to FlowWorkerExecutor / FuncDSL
+   (blocks `entityLinkProposalWorker` migration)
+
+These are out of scope for aml#66 — tracked in the "New issues to file" table above.
