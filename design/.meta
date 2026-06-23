@@ -1,0 +1,9 @@
+branch: issue-66-sar-workers-flow
+project-sha: 32179ab19be6b6f2cee86d5ed1b35c5276bb31f3
+date: 2026-06-23
+issue: 66
+issue-repo: casehubio/aml
+covers: 66
+flyway-next-v: none
+design-repo: workspace
+design-section-hashes: 
