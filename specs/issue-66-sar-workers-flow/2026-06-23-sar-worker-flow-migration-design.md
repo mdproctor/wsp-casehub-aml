@@ -19,11 +19,8 @@ delegating to `FlowWorkerExecutor`, matching the behaviour of `executeSync`. The
 
 ## Pre-requisite: Confirm engine SNAPSHOT includes engine#559
 
-**This step gates integration test execution.** The local M2 SNAPSHOT jars
-(`casehub-engine` and `casehub-engine-flow`) are timestamped 2026-06-23 03:36–03:38. Engine#559
-was confirmed closed after that timestamp; the local jars likely predate the fix.
-
-Before running `AmlLayer6InvestigationTest`, force-refresh the SNAPSHOT:
+**This step gates integration test execution.** Always force-refresh the engine SNAPSHOT before
+running `AmlLayer6InvestigationTest`:
 
 ```bash
 mvn -U dependency:resolve -pl app -am -q
@@ -33,10 +30,12 @@ If the fix is not yet published (CI may still be running), the unit test will pa
 only `WorkerFunction.Flow.class` instance type), but `AmlLayer6InvestigationTest` will fail with
 an opaque Awaitility timeout — `WorkerExecutionContext.current()` still returns null, causing an
 NPE inside the SAR lambda, causing the engine case to fail, causing the poll to never see
-`status=completed`.
+`status=completed`. In that case, wait for CI to publish the updated SNAPSHOT before proceeding
+to the integration test.
 
-**Wait for the updated SNAPSHOT before running Layer 6 integration tests if force-refresh does
-not produce a jar newer than 03:38.**
+Note: the spec was written at a point in time when the local jars predated engine#559; the
+timestamp context in earlier drafts is no longer relevant. Force-refresh is always the right
+action regardless of jar timestamps.
 
 ## Scope
 
@@ -69,7 +68,7 @@ New issues to file (before executing §6 — see ordering constraint there):
 
 | Repo | Description |
 |------|-------------|
-| `casehubio/aml` | Migrate `entityResolutionWorker` + `investigationSummaryWorker` in `AmlOversightCaseHub` to FuncWorkflowBuilder (PP-20260531 compliance — these use single-arg `WorkerResult.of(Map)` and are not blocked) |
+| `casehubio/aml` | Migrate `entityResolutionWorker` + `investigationSummaryWorker` in `AmlOversightCaseHub` to FuncWorkflowBuilder (PP-20260531 compliance — single-arg `WorkerResult.of(Map)`, not blocked; both are `private static Worker` — static qualifier retained since no instance state is captured) |
 | `casehubio/engine` | Add PlannedAction support to FlowWorkerExecutor / FuncDSL — needed to unblock `entityLinkProposalWorker` migration in `AmlOversightCaseHub` (see §7 for constraint detail and API direction) |
 
 ## §1 — Migration
@@ -111,11 +110,22 @@ naming pattern used by other workers (e.g., `"entity-resolution"`, `"pattern-ana
 
 ## §2 — Javadoc
 
-Remove the "blocked on engine" language from three locations:
+Three locations require changes:
 
-1. **Class-level Javadoc** — remove the sentence:
-   > "SAR drafting workers remain as `WorkerFunction.Sync` pending engine support for
-   > `WorkerExecutionContext` in the flow execution path (see #66)."
+1. **Class-level Javadoc** — replace the entire `<p>Pure-computation workers use...` paragraph:
+
+   Current:
+   > `<p>Pure-computation workers use {@code FuncWorkflowBuilder.workflow().tasks(function(...)).build()}`
+   > `per protocol PP-20260531-worker-func-exec. SAR drafting workers remain as`
+   > `{@code WorkerFunction.Sync} pending engine support for {@link WorkerExecutionContext} in`
+   > `the flow execution path (see #66).`
+
+   Replace with:
+   > `<p>All workers use {@code FuncWorkflowBuilder.workflow().tasks(function(...)).build()}`
+   > `per protocol PP-20260531-worker-func-exec.`
+
+   Removing only the SAR sentence would leave "Pure-computation workers use..." implying a
+   non-pure-computation category still exists. After this migration that category is gone.
 
 2. **`sarDraftingWorkerJunior()` Javadoc** — remove the paragraph starting:
    > "Remains as WorkerFunction.Sync (raw lambda) because WorkerExecutionContext.current()
@@ -256,8 +266,8 @@ violation. Two are NOT blocked by this issue and should be tracked separately:
 
 | Worker | Return type | Status |
 |--------|-------------|--------|
-| `oversight-entity-resolution-agent` | `WorkerResult.of(Map)` — single arg | **Migratable now** |
-| `oversight-investigation-summary-agent` | `WorkerResult.of(Map)` — single arg | **Migratable now** |
+| `oversight-entity-resolution-agent` | `WorkerResult.of(Map)` — single arg | **Migratable now** — `private static Worker`, static qualifier retained |
+| `oversight-investigation-summary-agent` | `WorkerResult.of(Map)` — single arg | **Migratable now** — `private static Worker`, static qualifier retained |
 | `oversight-entity-link-proposal-agent` | `WorkerResult.of(Map, PlannedAction)` — two args | **Blocked** |
 
 `entityLinkProposalWorker` is blocked because `executeFlow` calls `model.asMap()` on the
