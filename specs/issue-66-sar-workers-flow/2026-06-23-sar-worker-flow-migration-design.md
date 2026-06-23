@@ -46,9 +46,14 @@ Files changed in `app/`:
 |------|--------|
 | `AmlInvestigationCaseDescriptor.java` | Migrate 2 workers; update Javadoc |
 | `AmlInvestigationCaseDescriptorTest.java` | Change SAR worker assertion from `Sync` to `Flow`; update comments |
+
+Project root (workspace):
+
+| File | Change |
+|------|--------|
 | `CLAUDE.md` | Update misleading `Worker.Builder.function()` return type note |
 
-Project root:
+Project root (`/Users/mdproctor/claude/casehub/aml`):
 
 | File | Change |
 |------|--------|
@@ -60,12 +65,12 @@ Outside `app/`:
 |----------|--------|
 | Garden entry `GE-20260609-ddd4b8` | Revise stale ⚠️ caveat to resolved note |
 
-New issues to file:
+New issues to file (before executing §6 — see ordering constraint there):
 
 | Repo | Description |
 |------|-------------|
 | `casehubio/aml` | Migrate `entityResolutionWorker` + `investigationSummaryWorker` in `AmlOversightCaseHub` to FuncWorkflowBuilder (PP-20260531 compliance — these use single-arg `WorkerResult.of(Map)` and are not blocked) |
-| `casehubio/engine` | Add PlannedAction support to FlowWorkerExecutor / FuncDSL — needed to unblock `entityLinkProposalWorker` migration in `AmlOversightCaseHub` (see §6 for constraint detail) |
+| `casehubio/engine` | Add PlannedAction support to FlowWorkerExecutor / FuncDSL — needed to unblock `entityLinkProposalWorker` migration in `AmlOversightCaseHub` (see §7 for constraint detail and API direction) |
 
 ## §1 — Migration
 
@@ -217,6 +222,13 @@ mvn test -pl app -am -Dtest=AmlLayer6InvestigationTest -Dsurefire.failIfNoSpecif
 
 ## §6 — ARC42STORIES.MD
 
+**Ordering constraint:** File the two issues in the "New issues to file" table first. Write their
+real numbers directly into the two `(aml#NNN, engine#NNN)` placeholders below before committing.
+This produces one ARC42STORIES.MD commit, not two.
+
+LAYER-LOG.md: no update required — this migration corrects known debt within Layer 5, not a layer
+extension or new layer. The ARC42STORIES.MD update below is sufficient.
+
 Three stale references to update:
 
 **Line ~1050** (§9.4 Layer 5 descriptor bullet):
@@ -235,7 +247,7 @@ blocked. Now all 7 use Flow:
 **Line ~1462** (§12 risks/debt table):
 Change status from "Partially resolved..." to:
 > "✅ Resolved — all 7 workers in `AmlInvestigationCaseDescriptor` use `WorkerFunction.Flow`
-> (aml#46 + aml#66). `AmlOversightCaseHub` workers tracked separately (aml#NNN, aml#NNN)."
+> (aml#46 + aml#66). `AmlOversightCaseHub` workers tracked separately (aml#NNN, engine#NNN)."
 
 ## §7 — AmlOversightCaseHub: Scope Boundary and Constraint
 
@@ -254,9 +266,30 @@ FuncDSL chain. If migrated as-is, the PlannedAction is silently lost and the ove
 never fires.
 
 The right fix is an engine-side change: FuncDSL needs a mechanism to attach a PlannedAction
-to a function task — e.g., `function(lambda, Map.class).withPlannedAction(actionFn)` — so
+to a function task — `function(lambda, Map.class).withPlannedAction(actionFn)` — so
 `FlowWorkerExecutor` can include it in the wrapped `WorkerResult`. This requires a new engine
 issue.
+
+**API direction for the engine issue — `actionFn` input type:**
+
+`actionFn` must be `Function<Map<String, Object>, PlannedAction>` where the argument is the
+**task input** (the same `s` that `function(s -> ..., Map.class)` receives — the case context
+at the point the worker is invoked). It must NOT receive the output.
+
+Why: the current `entityLinkProposalWorker` output map is
+`{proposedLink, entityType, riskScore}`. The PlannedAction metadata requires `ownershipChain`,
+which is in the input (`entityResolution.ownershipChain`) but not in the output. An
+output-typed `actionFn` cannot access `ownershipChain` and would require the output contract
+to be widened — conflating what gets committed to the case context with what the PlannedAction
+needs. The task input contains the complete context.
+
+For single-task workflows (the current pattern), task input equals workflow input. For
+multi-step workflows, `withPlannedAction` attaches to a specific task and receives that task's
+input (the output of the prior step), not the original workflow input. This is the simpler
+executor design: no special bookkeeping needed to thread the original input through the chain.
+If a future use case needs the original workflow input in a later task's `withPlannedAction`,
+restructure the workflow (e.g., pass the needed data through as a named output) rather than
+adding a BiFunction variant.
 
 **Actions:**
 1. File `casehubio/aml` issue: migrate `entityResolutionWorker` + `investigationSummaryWorker`
