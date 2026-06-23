@@ -88,7 +88,7 @@ migrated workers. Because the SAR workers capture instance fields (`objectMapper
 
 // After (Flow)
 .function(
-    workflow("sar-drafting-junior")          // workflow name unique per worker
+    workflow("sar-drafting-junior")
         .tasks(
             function(s -> {
                 @SuppressWarnings("unchecked")
