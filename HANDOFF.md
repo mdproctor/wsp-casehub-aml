@@ -1,28 +1,29 @@
-# Handoff — #67 closed: oversight workers migrated to FuncWorkflowBuilder
+# Handoff — #70 closed: upstream SNAPSHOT migration (engine worker-api, qhorus ChannelCreateRequest)
 
 ## What this project is
 
 *Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
-## This session (2026-06-25)
+## This session (2026-06-25/26)
 
-Closed branch `issue-67-oversight-worker-flow` covering #67.
+Closed branch `issue-70-upstream-snapshot-migration` covering #70.
 
-1. **#67** — `entityResolutionWorker` and `investigationSummaryWorker` in `AmlOversightCaseHub` migrated from `WorkerFunction.Sync` to `FuncWorkflowBuilder` (`WorkerFunction.Flow`). `entityLinkProposalWorker` remains Sync (blocked on engine#564 — PlannedAction not supported in Flow). Added `AmlOversightCaseHubTest` with exhaustive execution model classification guard.
+1. **GITHUB_TOKEN** — set up classic PAT with `read:packages` scope for GitHub Packages resolution. `mvn -U dependency:resolve` now works.
 
-2. **Engine SNAPSHOT fix** — root-caused "CaseInstance not found or wrong tenant" from previous session. Cause: local `mvn install` from engine `issue-543` branch polluted `.m2` with incompatible SNAPSHOTs. Fix: rebuild engine from correct commit. Garden GE-20260624-e3ffa7 submitted.
+2. **#70** — migrated AML to upstream SNAPSHOT breaking changes:
+   - **Engine worker-api (#543/#567):** Worker primitives moved to `io.casehub.worker.api`, `FlowWorkerFunction` to `io.casehub.engine.flow`, `Worker`/`Capability` became records, `ActionRiskClassifier.classify()` gained `ClassificationContext`, `PlannedAction.context()` → `parameters()`.
+   - **Qhorus #218:** `ChannelService.create()` consolidated into `ChannelCreateRequest.builder()`.
+   - 9 files changed, all 183 tests pass.
 
-3. **ARC42STORIES.MD + CLAUDE.md synced** — worker migration status updated (2/3 oversight workers now Flow). qhorus#190 stale reference resolved.
+3. **Root cause investigation** — engine main (`37b2eea8`) is broken; installed engine jars are from `issue-570` branch. `casehub-worker-api` version coupling between engine#543 and #567 caused multiple build failures before correct coordinated state was identified. Three garden entries submitted (GE-20260626-4a4790, GE-20260626-9ce1c9, GE-20260626-2e4a0d).
 
-## Known issue — GitHub Packages 401 + .m2 pollution
+## Known issue — engine main broken
 
-`GITHUB_TOKEN` environment variable is not set, causing all GitHub Packages requests to return 401. The `.m2` local SNAPSHOT cache was cleaned during this session (549 files removed) to fix engine branch pollution, but this also removed modules that had no GitHub-cached fallback (casehub-work, casehub-engine-common, etc.). Full `mvn install` on AML currently fails with dependency resolution errors.
-
-**Fix:** Set `GITHUB_TOKEN` in shell profile, then `mvn -U -f /Users/mdproctor/claude/casehub/aml/pom.xml dependency:resolve` to pull all published SNAPSHOTs. Alternatively, rebuild dependency chain bottom-up from local clones: parent → platform → eidos → connectors → ledger → qhorus → work → engine → aml. All repos must be on commits matching the published SNAPSHOTs (pre-June breaking changes on engine, qhorus main).
+Engine main HEAD (`37b2eea8`) does not compile. The installed engine jars are from `issue-570-expression-engine-output-schema` branch. `casehub-worker-api` must be built from `72fc1ee` (bare marker `WorkerFunction`) to match. See GE-20260626-2e4a0d.
 
 ## Immediate next step
 
-Fix `GITHUB_TOKEN` so `mvn -U` resolves published SNAPSHOTs. Verify `mvn install` passes. Then pick #58 (separate sar-drafting from compliance-review-opening, M · Med).
+Pick #58 (separate sar-drafting from compliance-review-opening, M · Med).
 
 ## What's left
 
@@ -33,6 +34,6 @@ Fix `GITHUB_TOKEN` so `mvn -U` resolves published SNAPSHOTs. Verify `mvn install
 
 ## References
 
-- Main: `a9365c1` (squashed feat commit for #67)
-- Branch closed: `issue-67-oversight-worker-flow` — EPIC-CLOSED.md committed
-- Garden: `GE-20260624-e3ffa7` (local mvn install from feature branch overrides published SNAPSHOT)
+- Main: `b6404d8` (ARC42 stale scan post-close)
+- Branch closed: `issue-70-upstream-snapshot-migration` — EPIC-CLOSED.md committed
+- Garden: GE-20260626-4a4790, GE-20260626-9ce1c9, GE-20260626-2e4a0d
