@@ -1,0 +1,9 @@
+branch: issue-70-upstream-snapshot-migration
+project-sha: c3069729b5afaf6cacf4e5c21494c0534bf99912
+date: 2026-06-25
+issue: 70
+issue-repo: casehubio/aml
+covers: 70
+flyway-next-v: none
+design-repo: project
+design-section-hashes: 4d2cc5ab:##
