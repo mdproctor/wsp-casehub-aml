@@ -6,15 +6,15 @@
 
 ---
 
-## #69 — Worker accessor renames
+## #69 — Worker import migration
 
-Imports already migrated to `io.casehub.worker.api.*`. Remaining work: accessor renames in two test files where `CaseDefinition` record accessors still use JavaBean style.
+Imports already migrated to `io.casehub.worker.api.*` (ledger#88, parent#251). No remaining work.
 
-**Files:**
-- `AmlInvestigationCaseHubTest.java` — `getName()` → `name()`, `getCapabilities()` → `capabilities()`
-- `AmlOversightCaseHubTest.java` — `getName()` → `name()`
+`CaseDefinition` is a regular class with JavaBean-style getters (`getName()`, `getCapabilities()`),
+not a Java record. The test files already use the correct accessor style for each type:
+`CaseDefinition` → JavaBean getters, `Worker`/`Capability` → record accessors. No renames needed.
 
-Scale: XS. Mechanical.
+Scale: XS. Done — close #69.
 
 ---
 
@@ -43,24 +43,38 @@ Separate lifecycle status from domain outcome. `status` answers "is it done?" `o
   "caseId": "uuid",
   "status": "completed",
   "outcome": {
-    "type": "gate-rejected",
-    "action": "SAR_FILING",
-    "reason": "Insufficient evidence of layering pattern"
+    "type": "gate-rejected"
   }
 }
 ```
 
-Outcome types: `gate-rejected`, `sar-filed`. Null while `status` is `in-progress`.
+Outcome types:
+- `gate-rejected` — MLRO rejected the SAR filing (from `reviewDecision = "REJECTED"`)
+- `sar-filed` — MLRO approved the SAR filing (from `reviewDecision = "APPROVED"`)
+- `review-inconclusive` — officer completed review but the observer failed to record the
+  decision (from `reviewDecision = "UNKNOWN"`, written by the PP-20260530-49856c failure path)
+
+`outcome` is null while `status` is `in-progress`.
+
+**Eventual consistency:** `outcome` may also be null for a recently-completed case. The
+`AmlWorkItemLifecycleObserver` fires via `@ObservesAsync` — the engine sets `CaseStatus.COMPLETED`
+synchronously before the async ledger write commits. During this window (typically sub-second),
+the API returns `status: "completed"` with `outcome: null`. Consumers should treat this as
+transient and retry.
 
 ### Data flow
 
 1. `AmlWorkItemLifecycleObserver` already writes `AML_SAR_OFFICER_REVIEWED` with `reviewDecision` — no change
-2. `AmlLayer9Resource.getInvestigation()` adds: query ledger for officer review entry via `LedgerEntryRepository.findLatestBySubjectId()`
-3. Derive `InvestigationOutcome` from the ledger entry's `reviewDecision` field
+2. `AmlLayer9Resource.getInvestigation()` adds: query ledger via `LedgerEntryRepository.findBySubjectId(caseId)`
+   filtered to `AmlSarOfficerReviewedLedgerEntry.class::isInstance` (consistent with existing pattern in
+   `AmlLedgerService.writeSarOfficerReviewed()` and `writeComplianceReviewOpened()`)
+3. Derive `InvestigationOutcome` from the ledger entry's `reviewDecision` field:
+   `"APPROVED"` → `sar-filed`, `"REJECTED"` → `gate-rejected`, `"UNKNOWN"` → `review-inconclusive`
+4. If no matching entry exists, return `outcome: null` (in-progress or eventual-consistency window)
 
 ### New types
 
-- `InvestigationOutcome` — record in `api/` module (JPA-free): `type`, `action`, `reason`
+- `InvestigationOutcome` — record in `api/` module (JPA-free): `type` (String)
 
 ### Not in scope
 
@@ -71,5 +85,7 @@ Outcome types: `gate-rejected`, `sar-filed`. Null while `status` is `in-progress
 ### Test coverage
 
 - Happy path: SAR filed and approved → `outcome.type = "sar-filed"`
-- Rejection: MLRO rejects → `outcome.type = "gate-rejected"` with reason
-- In-progress: no officer review → `outcome` is null
+- Rejection: MLRO rejects → `outcome.type = "gate-rejected"`
+- Observer failure: ledger write fails, fallback writes UNKNOWN → `outcome.type = "review-inconclusive"`
+- In-progress: no officer review entry in ledger → `outcome` is null
+- Eventual consistency: case completed but async observer not yet fired → `outcome` is null
