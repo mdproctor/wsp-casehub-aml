@@ -51,30 +51,49 @@ Separate lifecycle status from domain outcome. `status` answers "is it done?" `o
 Outcome types:
 - `gate-rejected` — MLRO rejected the SAR filing (from `reviewDecision = "REJECTED"`)
 - `sar-filed` — MLRO approved the SAR filing (from `reviewDecision = "APPROVED"`)
-- `review-inconclusive` — officer completed review but the observer failed to record the
-  decision (from `reviewDecision = "UNKNOWN"`, written by the PP-20260530-49856c failure path)
+- `decision-not-recorded` — officer completed review but the observer failed to record the
+  decision (from `reviewDecision = "UNKNOWN"`, written by the PP-20260530-49856c failure path).
+  This is a system recording failure, not a domain outcome — the officer made a definite
+  decision but the ledger write failed.
 
 `outcome` is null while `status` is `in-progress`.
+
+**Entry selection rule:** The PP-20260530-49856c failure path can produce multiple
+`AmlSarOfficerReviewedLedgerEntry` records for the same case (e.g., a successful write followed
+by a spurious failure entry when the method throws after DB commit). Selection: prefer entries
+with `actorType = ActorType.HUMAN` (the officer's actual decision, written by
+`writeSarOfficerReviewed`). Fall back to `ActorType.SYSTEM` (the failure marker, written by
+`writeSarOfficerReviewedFailure`) only when no HUMAN-attributed entry exists.
 
 **Eventual consistency:** `outcome` may also be null for a recently-completed case. The
 `AmlWorkItemLifecycleObserver` fires via `@ObservesAsync` — the engine sets `CaseStatus.COMPLETED`
 synchronously before the async ledger write commits. During this window (typically sub-second),
-the API returns `status: "completed"` with `outcome: null`. Consumers should treat this as
-transient and retry.
+the API returns `status: "completed"` with `outcome: null`.
+
+**Bounded retry guidance:** Consumers should retry `completed + null outcome` for at most
+5 seconds. After that window, treat `null` outcome as a permanent recording failure — the async
+event was never delivered (e.g., JVM crash between engine commit and CDI event delivery). This is
+a pre-existing gap in the `@ObservesAsync` pattern, not introduced by this spec. The 5-second
+bound provides comfortable margin over the sub-second typical delivery window.
 
 ### Data flow
 
 1. `AmlWorkItemLifecycleObserver` already writes `AML_SAR_OFFICER_REVIEWED` with `reviewDecision` — no change
-2. `AmlLayer9Resource.getInvestigation()` adds: query ledger via `LedgerEntryRepository.findBySubjectId(caseId)`
-   filtered to `AmlSarOfficerReviewedLedgerEntry.class::isInstance` (consistent with existing pattern in
-   `AmlLedgerService.writeSarOfficerReviewed()` and `writeComplianceReviewOpened()`)
-3. Derive `InvestigationOutcome` from the ledger entry's `reviewDecision` field:
-   `"APPROVED"` → `sar-filed`, `"REJECTED"` → `gate-rejected`, `"UNKNOWN"` → `review-inconclusive`
-4. If no matching entry exists, return `outcome: null` (in-progress or eventual-consistency window)
+2. `AmlInvestigationOutcomeService` (new `@ApplicationScoped` service) encapsulates outcome derivation:
+   a. Query ledger via `LedgerEntryRepository.findBySubjectId(caseId)`,
+      filter to `AmlSarOfficerReviewedLedgerEntry.class::isInstance`
+   b. Apply entry selection rule: prefer `actorType = HUMAN`; fall back to `SYSTEM`
+   c. Derive `InvestigationOutcome` from the selected entry's `reviewDecision` field:
+      `"APPROVED"` → `sar-filed`, `"REJECTED"` → `gate-rejected`, `"UNKNOWN"` → `decision-not-recorded`
+   d. If no matching entry exists, return `null` (in-progress or eventual-consistency window)
+3. `AmlLayer9Resource.getInvestigation()` delegates to `AmlInvestigationOutcomeService` — thin
+   dispatcher only, consistent with `AmlLayer7Resource` → `AmlComplianceEvidenceService` pattern
 
 ### New types
 
 - `InvestigationOutcome` — record in `api/` module (JPA-free): `type` (String)
+- `AmlInvestigationOutcomeService` — `@ApplicationScoped` in `app/` module: outcome derivation
+  logic (ledger query, entry selection, reviewDecision mapping)
 
 ### Not in scope
 
@@ -86,6 +105,9 @@ transient and retry.
 
 - Happy path: SAR filed and approved → `outcome.type = "sar-filed"`
 - Rejection: MLRO rejects → `outcome.type = "gate-rejected"`
-- Observer failure: ledger write fails, fallback writes UNKNOWN → `outcome.type = "review-inconclusive"`
+- Observer failure: ledger write fails, fallback writes UNKNOWN → `outcome.type = "decision-not-recorded"`
 - In-progress: no officer review entry in ledger → `outcome` is null
 - Eventual consistency: case completed but async observer not yet fired → `outcome` is null
+- Multiple entries (race): both HUMAN and SYSTEM entries exist → HUMAN wins → `outcome.type` from officer's decision
+- Multiple entries (failure only): only SYSTEM entry exists → `outcome.type = "decision-not-recorded"`
+- Service isolation: `AmlInvestigationOutcomeService` tested independently of JAX-RS

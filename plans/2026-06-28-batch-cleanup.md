@@ -4,7 +4,7 @@
 
 **Goal:** Close #69 (no code changes), rename CI workflow (#68), and add gate rejection outcome to the Layer 9 investigation API (#71).
 
-**Architecture:** #71 adds an `InvestigationOutcome` record to the `api/` module (JPA-free), modifies `AmlLayer9Resource` to query the ledger for officer review entries, and derives outcome from the `reviewDecision` field. Lifecycle status and domain outcome are separate concerns.
+**Architecture:** #71 adds an `InvestigationOutcome` record to the `api/` module (JPA-free) and an `AmlInvestigationOutcomeService` to the `app/` module that encapsulates outcome derivation from the ledger. `AmlLayer9Resource` delegates to the service — thin dispatcher only, consistent with `AmlLayer7Resource` → `AmlComplianceEvidenceService`. Entry selection prefers `actorType=HUMAN` over `SYSTEM` to handle the double-try/catch race in the observer. Lifecycle status and domain outcome are separate concerns.
 
 **Tech Stack:** Java 21, Quarkus 3.32.2, REST Assured, Awaitility, casehub-ledger `LedgerEntryRepository`
 
@@ -12,6 +12,7 @@
 
 - `TenancyConstants.DEFAULT_TENANT_ID` at all ledger call sites
 - `LedgerEntryRepository.findBySubjectId()` + type filter — never `findLatestBySubjectId()` for typed queries
+- Entry selection rule: prefer `actorType = ActorType.HUMAN` over `ActorType.SYSTEM` when multiple `AmlSarOfficerReviewedLedgerEntry` entries exist for the same case
 - `casehub.ledger.hash-chain.enabled=false` in test properties (H2 limitation)
 - Every test that starts an engine investigation must drain to `status=completed`
 - `quarkus.arc.exclude-types` must include engine-work-adapter and work exclusions per CLAUDE.md
@@ -71,7 +72,7 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `InvestigationOutcome.fromReviewDecision(String reviewDecision)` returns `InvestigationOutcome` with `type()` returning `"sar-filed"`, `"gate-rejected"`, or `"review-inconclusive"`. Returns `null` for unknown values.
+- Produces: `InvestigationOutcome.fromReviewDecision(String reviewDecision)` returns `InvestigationOutcome` with `type()` returning `"sar-filed"`, `"gate-rejected"`, or `"decision-not-recorded"`. Returns `null` for null or unrecognised values.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -100,10 +101,10 @@ class InvestigationOutcomeTest {
     }
 
     @Test
-    void unknown_maps_to_review_inconclusive() {
+    void unknown_maps_to_decision_not_recorded() {
         final InvestigationOutcome outcome = InvestigationOutcome.fromReviewDecision("UNKNOWN");
         assertNotNull(outcome);
-        assertEquals("review-inconclusive", outcome.type());
+        assertEquals("decision-not-recorded", outcome.type());
     }
 
     @Test
@@ -139,7 +140,7 @@ public record InvestigationOutcome(String type) {
         return switch (reviewDecision) {
             case "APPROVED" -> new InvestigationOutcome("sar-filed");
             case "REJECTED" -> new InvestigationOutcome("gate-rejected");
-            case "UNKNOWN" -> new InvestigationOutcome("review-inconclusive");
+            case "UNKNOWN" -> new InvestigationOutcome("decision-not-recorded");
             default -> null;
         };
     }
@@ -165,16 +166,196 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Add outcome to Layer 9 investigation API (#71)
+### Task 3: Add `AmlInvestigationOutcomeService` with entry selection (#71)
+
+**Files:**
+- Create: `app/src/main/java/io/casehub/aml/engine/AmlInvestigationOutcomeService.java`
+- Test: `app/src/test/java/io/casehub/aml/engine/AmlInvestigationOutcomeServiceTest.java`
+
+**Interfaces:**
+- Consumes: `InvestigationOutcome.fromReviewDecision(String)` from Task 2. `LedgerEntryRepository.findBySubjectId(UUID subjectId, String tenancyId)` returns `List<LedgerEntry>`. `AmlSarOfficerReviewedLedgerEntry` has fields `reviewDecision` (String) and `actorType` (`ActorType`).
+- Produces: `AmlInvestigationOutcomeService.resolve(UUID caseId)` returns `InvestigationOutcome` or `null`. Entry selection: prefer `actorType=HUMAN` over `SYSTEM`. Used by `AmlLayer9Resource` in Task 4.
+
+- [ ] **Step 1: Write the service unit test**
+
+Create `app/src/test/java/io/casehub/aml/engine/AmlInvestigationOutcomeServiceTest.java`:
+
+```java
+package io.casehub.aml.engine;
+
+import io.casehub.aml.domain.InvestigationOutcome;
+import io.casehub.aml.ledger.AmlSarOfficerReviewedLedgerEntry;
+import io.casehub.ledger.runtime.model.LedgerEntry;
+import io.casehub.ledger.runtime.repository.LedgerEntryRepository;
+import io.casehub.platform.api.identity.ActorType;
+import io.casehub.platform.api.identity.TenancyConstants;
+import org.junit.jupiter.api.Test;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import static org.junit.jupiter.api.Assertions.*;
+
+class AmlInvestigationOutcomeServiceTest {
+
+    @Test
+    void returns_null_when_no_officer_review_entry() {
+        final AmlInvestigationOutcomeService service = serviceWith(List.of());
+        assertNull(service.resolve(UUID.randomUUID()));
+    }
+
+    @Test
+    void returns_sar_filed_for_approved_human_entry() {
+        final AmlSarOfficerReviewedLedgerEntry entry = officerEntry("APPROVED", ActorType.HUMAN);
+        final AmlInvestigationOutcomeService service = serviceWith(List.of(entry));
+        final InvestigationOutcome outcome = service.resolve(UUID.randomUUID());
+        assertNotNull(outcome);
+        assertEquals("sar-filed", outcome.type());
+    }
+
+    @Test
+    void returns_gate_rejected_for_rejected_human_entry() {
+        final AmlSarOfficerReviewedLedgerEntry entry = officerEntry("REJECTED", ActorType.HUMAN);
+        final AmlInvestigationOutcomeService service = serviceWith(List.of(entry));
+        final InvestigationOutcome outcome = service.resolve(UUID.randomUUID());
+        assertNotNull(outcome);
+        assertEquals("gate-rejected", outcome.type());
+    }
+
+    @Test
+    void returns_decision_not_recorded_for_unknown_system_entry() {
+        final AmlSarOfficerReviewedLedgerEntry entry = officerEntry("UNKNOWN", ActorType.SYSTEM);
+        final AmlInvestigationOutcomeService service = serviceWith(List.of(entry));
+        final InvestigationOutcome outcome = service.resolve(UUID.randomUUID());
+        assertNotNull(outcome);
+        assertEquals("decision-not-recorded", outcome.type());
+    }
+
+    @Test
+    void prefers_human_entry_over_system_entry_in_race() {
+        final AmlSarOfficerReviewedLedgerEntry humanEntry = officerEntry("APPROVED", ActorType.HUMAN);
+        final AmlSarOfficerReviewedLedgerEntry systemEntry = officerEntry("UNKNOWN", ActorType.SYSTEM);
+        final AmlInvestigationOutcomeService service = serviceWith(List.of(humanEntry, systemEntry));
+        final InvestigationOutcome outcome = service.resolve(UUID.randomUUID());
+        assertNotNull(outcome);
+        assertEquals("sar-filed", outcome.type());
+    }
+
+    @Test
+    void prefers_human_entry_regardless_of_list_order() {
+        final AmlSarOfficerReviewedLedgerEntry humanEntry = officerEntry("REJECTED", ActorType.HUMAN);
+        final AmlSarOfficerReviewedLedgerEntry systemEntry = officerEntry("UNKNOWN", ActorType.SYSTEM);
+        // SYSTEM entry first in list
+        final AmlInvestigationOutcomeService service = serviceWith(List.of(systemEntry, humanEntry));
+        final InvestigationOutcome outcome = service.resolve(UUID.randomUUID());
+        assertNotNull(outcome);
+        assertEquals("gate-rejected", outcome.type());
+    }
+
+    private static AmlSarOfficerReviewedLedgerEntry officerEntry(final String decision,
+            final ActorType actorType) {
+        final AmlSarOfficerReviewedLedgerEntry entry = new AmlSarOfficerReviewedLedgerEntry();
+        entry.reviewDecision = decision;
+        entry.actorType = actorType;
+        return entry;
+    }
+
+    private static AmlInvestigationOutcomeService serviceWith(
+            final List<LedgerEntry> entries) {
+        final LedgerEntryRepository repo = new LedgerEntryRepository() {
+            @Override
+            public List<LedgerEntry> findBySubjectId(UUID subjectId, String tenancyId) {
+                return entries;
+            }
+            // Stub remaining methods — not needed for this test
+            @Override public void save(LedgerEntry entry, String tenancyId) {}
+            @Override public Optional<LedgerEntry> findLatestBySubjectId(UUID subjectId, String tenancyId) { return Optional.empty(); }
+            @Override public Optional<LedgerEntry> findEntryById(UUID id, String tenancyId) { return Optional.empty(); }
+        };
+        return new AmlInvestigationOutcomeService(repo);
+    }
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `mvn test -pl app -am -Dtest=AmlInvestigationOutcomeServiceTest -Dsurefire.failIfNoSpecifiedTests=false`
+Expected: compilation failure — `AmlInvestigationOutcomeService` does not exist.
+
+- [ ] **Step 3: Write the service implementation**
+
+Create `app/src/main/java/io/casehub/aml/engine/AmlInvestigationOutcomeService.java`:
+
+```java
+package io.casehub.aml.engine;
+
+import io.casehub.aml.domain.InvestigationOutcome;
+import io.casehub.aml.ledger.AmlSarOfficerReviewedLedgerEntry;
+import io.casehub.ledger.runtime.repository.LedgerEntryRepository;
+import io.casehub.platform.api.identity.ActorType;
+import io.casehub.platform.api.identity.TenancyConstants;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import java.util.Comparator;
+import java.util.UUID;
+
+@ApplicationScoped
+public class AmlInvestigationOutcomeService {
+
+    private static final Comparator<AmlSarOfficerReviewedLedgerEntry> HUMAN_FIRST =
+            Comparator.comparing(
+                    (AmlSarOfficerReviewedLedgerEntry e) -> e.actorType == ActorType.HUMAN ? 0 : 1);
+
+    private final LedgerEntryRepository ledgerEntryRepository;
+
+    @Inject
+    public AmlInvestigationOutcomeService(final LedgerEntryRepository ledgerEntryRepository) {
+        this.ledgerEntryRepository = ledgerEntryRepository;
+    }
+
+    public InvestigationOutcome resolve(final UUID caseId) {
+        return ledgerEntryRepository
+                .findBySubjectId(caseId, TenancyConstants.DEFAULT_TENANT_ID).stream()
+                .filter(AmlSarOfficerReviewedLedgerEntry.class::isInstance)
+                .map(AmlSarOfficerReviewedLedgerEntry.class::cast)
+                .min(HUMAN_FIRST)
+                .map(e -> InvestigationOutcome.fromReviewDecision(e.reviewDecision))
+                .orElse(null);
+    }
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `mvn test -pl app -am -Dtest=AmlInvestigationOutcomeServiceTest -Dsurefire.failIfNoSpecifiedTests=false`
+Expected: 6 tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add app/src/main/java/io/casehub/aml/engine/AmlInvestigationOutcomeService.java \
+       app/src/test/java/io/casehub/aml/engine/AmlInvestigationOutcomeServiceTest.java
+git commit -m "feat(#71): add AmlInvestigationOutcomeService — entry selection prefers HUMAN over SYSTEM
+
+Encapsulates outcome derivation from ledger: findBySubjectId + type filter +
+actorType preference (HUMAN wins over SYSTEM in the double-try/catch race).
+
+Refs #71
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+### Task 4: Wire outcome into Layer 9 investigation API (#71)
 
 **Files:**
 - Modify: `app/src/main/java/io/casehub/aml/engine/AmlLayer9Resource.java`
 - Test: `app/src/test/java/io/casehub/aml/engine/AmlLayer9ActionGateTest.java` (add rejection test)
-- Test: `app/src/test/java/io/casehub/aml/engine/AmlLayer9ResourceTest.java` (add outcome assertions)
+- Test: `app/src/test/java/io/casehub/aml/engine/AmlLayer9ResourceTest.java` (add outcome assertion)
 
 **Interfaces:**
-- Consumes: `InvestigationOutcome.fromReviewDecision(String)` from Task 2. `LedgerEntryRepository.findBySubjectId(UUID subjectId, String tenancyId)` returns `List<LedgerEntry>`. `AmlSarOfficerReviewedLedgerEntry` has field `reviewDecision` (String).
-- Produces: `GET /api/layer9/investigations/{caseId}` now returns `{"caseId": "...", "status": "...", "outcome": {"type": "..."}}` where `outcome` is null when in-progress or during the eventual-consistency window.
+- Consumes: `AmlInvestigationOutcomeService.resolve(UUID caseId)` from Task 3. `WorkItemService.rejectFromSystem(UUID id, String actorId, String reason)` for the rejection test.
+- Produces: `GET /api/layer9/investigations/{caseId}` now returns `{"caseId": "...", "status": "...", "outcome": {"type": "..."}}` where `outcome` is null when in-progress or during the eventual-consistency window (max 5 seconds).
 
 - [ ] **Step 1: Write the rejection test**
 
@@ -228,16 +409,12 @@ void gate_rejection_surfaces_in_investigation_outcome() {
 }
 ```
 
-Add import for `WorkItemService.rejectFromSystem` — already available via `@Inject WorkItemService workItemService`.
-
 - [ ] **Step 2: Write the happy-path outcome test**
 
-Add to `AmlLayer9ActionGateTest.java` — extend the existing `gate_fires_for_pep_entity_and_resumes_on_approval` test with an outcome assertion after completion:
+Add to `AmlLayer9ActionGateTest.java` — extend the existing `gate_fires_for_pep_entity_and_resumes_on_approval` test. After the existing drain-to-completed Awaitility block, add:
 
 ```java
-// After the existing drain-to-completed Awaitility block, add:
-
-// Allow async observer to fire
+// Allow async observer to fire — assert outcome
 Awaitility.await()
     .atMost(10, TimeUnit.SECONDS)
     .pollInterval(300, TimeUnit.MILLISECONDS)
@@ -249,37 +426,6 @@ Awaitility.await()
     });
 ```
 
-- [ ] **Step 2b: Verify outcome is null for in-progress case**
-
-Add to `AmlLayer9ResourceTest.java` — assert the new `outcome` field is null for the happy-path CORPORATE case while in-progress (before completion), and `sar-filed` after:
-
-```java
-@Test
-void outcome_is_null_while_in_progress_then_sar_filed_after_completion() {
-    final String caseIdStr = given().contentType(ContentType.JSON).body(CORPORATE_TX)
-            .when().post("/api/layer9/investigations")
-            .then().statusCode(202)
-            .extract().path("caseId");
-
-    // Drain to completed
-    Awaitility.await().atMost(15, TimeUnit.SECONDS).pollInterval(200, TimeUnit.MILLISECONDS)
-            .until(() -> "completed".equals(
-                    given().when().get("/api/layer9/investigations/" + caseIdStr)
-                            .then().extract().path("status")));
-
-    // Allow async observer to fire, then check outcome
-    Awaitility.await().atMost(10, TimeUnit.SECONDS).pollInterval(300, TimeUnit.MILLISECONDS)
-            .until(() -> {
-                final String outcomeType = given()
-                    .when().get("/api/layer9/investigations/" + caseIdStr)
-                    .then().extract().path("outcome.type");
-                return "sar-filed".equals(outcomeType);
-            });
-}
-```
-
-Note: CORPORATE transactions go through the SAR drafting → compliance review → approval flow without a gate (no PEP, low risk). The observer writes `APPROVED` → outcome `sar-filed`. This test does NOT use the oversight gate path — it uses the Layer 5/6 non-gate flow via `AmlInvestigationCaseHub`, not `AmlOversightCaseHub`. If the non-gate flow does not produce an `AML_SAR_OFFICER_REVIEWED` entry (because no compliance review occurs for auto-completed CORPORATE investigations), the outcome will be null — which is also a valid assertion. Adjust the expected value based on what the actual flow produces.
-
 - [ ] **Step 3: Run tests to verify they fail**
 
 Run: `mvn test -pl app -am -Dtest=AmlLayer9ActionGateTest -Dsurefire.failIfNoSpecifiedTests=false`
@@ -289,18 +435,15 @@ Expected: FAIL — `outcome` field does not exist in the response.
 
 Edit `app/src/main/java/io/casehub/aml/engine/AmlLayer9Resource.java`:
 
-Add imports:
+Add import:
 ```java
 import io.casehub.aml.domain.InvestigationOutcome;
-import io.casehub.aml.ledger.AmlSarOfficerReviewedLedgerEntry;
-import io.casehub.ledger.runtime.repository.LedgerEntryRepository;
-import io.casehub.platform.api.identity.TenancyConstants;
 import java.util.HashMap;
 ```
 
 Add field:
 ```java
-@Inject LedgerEntryRepository ledgerEntryRepository;
+@Inject AmlInvestigationOutcomeService outcomeService;
 ```
 
 Replace the `getInvestigation` method body:
@@ -316,14 +459,7 @@ public Response getInvestigation(@PathParam("caseId") final UUID caseId) {
                 .await().indefinitely();
     }
     final boolean completed = instance != null && instance.getState() == CaseStatus.COMPLETED;
-
-    final InvestigationOutcome outcome = ledgerEntryRepository
-            .findBySubjectId(caseId, TenancyConstants.DEFAULT_TENANT_ID).stream()
-            .filter(AmlSarOfficerReviewedLedgerEntry.class::isInstance)
-            .map(AmlSarOfficerReviewedLedgerEntry.class::cast)
-            .findFirst()
-            .map(e -> InvestigationOutcome.fromReviewDecision(e.reviewDecision))
-            .orElse(null);
+    final InvestigationOutcome outcome = outcomeService.resolve(caseId);
 
     final Map<String, Object> body = new HashMap<>();
     body.put("caseId", caseId);
@@ -333,48 +469,45 @@ public Response getInvestigation(@PathParam("caseId") final UUID caseId) {
 }
 ```
 
-Note: `HashMap` allows null values — `Map.of()` does not. `outcome` is null while in-progress or during the eventual-consistency window.
-
-Remove the now-unused `TenancyConstants` import if it was only used in the old `findByUuid` call — check: it's still used for `findByUuid`, so keep it.
+Note: `HashMap` allows null values — `Map.of()` does not.
 
 - [ ] **Step 5: Run the full Layer 9 test suite**
 
 Run: `mvn test -pl app -am -Dtest=AmlLayer9ActionGateTest,AmlLayer9ResourceTest -Dsurefire.failIfNoSpecifiedTests=false`
-Expected: all tests PASS (3 existing + 1 new rejection test, plus outcome assertions on the approval test).
+Expected: all tests PASS.
 
 - [ ] **Step 6: Run the full project test suite**
 
 Run: `mvn test -pl app -am -Dsurefire.failIfNoSpecifiedTests=false`
-Expected: all tests PASS — no regressions in Layer 5/6/7/8 tests. The response shape change (adding `outcome` field) does not break existing tests because they assert specific fields, not the full response body.
+Expected: all tests PASS — no regressions.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add app/src/main/java/io/casehub/aml/engine/AmlLayer9Resource.java \
        app/src/test/java/io/casehub/aml/engine/AmlLayer9ActionGateTest.java
-git commit -m "feat(#71): surface gate rejection outcome in Layer 9 investigation API
+git commit -m "feat(#71): wire outcome into Layer 9 investigation API
 
-Adds outcome field to GET /api/layer9/investigations/{caseId}.
-Derives outcome from AmlSarOfficerReviewedLedgerEntry.reviewDecision:
-APPROVED → sar-filed, REJECTED → gate-rejected, UNKNOWN → review-inconclusive.
-Outcome is null while in-progress (eventual consistency with async observer).
+AmlLayer9Resource delegates to AmlInvestigationOutcomeService — thin
+dispatcher pattern. Adds gate rejection test via rejectFromSystem().
 
-Uses findBySubjectId() + type filter, consistent with AmlLedgerService pattern.
+Outcome types: sar-filed, gate-rejected, decision-not-recorded.
+Null while in-progress or during eventual-consistency window (max 5s).
 
-Refs #71
+Closes #71
 
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 4: Close #71 and update CLAUDE.md if needed
+### Task 5: Final verification and close
 
 **Files:**
 - None (housekeeping)
 
 **Interfaces:**
-- Consumes: Tasks 1–3 completed and passing
+- Consumes: Tasks 1–4 completed and passing
 - Produces: nothing
 
 - [ ] **Step 1: Run full build to confirm green**
@@ -382,12 +515,6 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
 Run: `mvn verify -pl app -am -Dsurefire.failIfNoSpecifiedTests=false`
 Expected: BUILD SUCCESS.
 
-- [ ] **Step 2: Close #71 on GitHub**
+- [ ] **Step 2: Verify no CLAUDE.md drift**
 
-```bash
-gh issue close 71 --repo casehubio/aml --comment "Gate rejection outcome surfaced in Layer 9 API. Downstream routing deferred to #72 (Layer 10)."
-```
-
-- [ ] **Step 3: Verify no CLAUDE.md drift**
-
-Check if the `AmlLayer9Resource` description or Layer 9 documentation in CLAUDE.md needs updating to reflect the new `outcome` field. If not, skip.
+Check if the `AmlLayer9Resource` description or Layer 9 documentation in CLAUDE.md needs updating to reflect the new `outcome` field and `AmlInvestigationOutcomeService`. If not, skip.
