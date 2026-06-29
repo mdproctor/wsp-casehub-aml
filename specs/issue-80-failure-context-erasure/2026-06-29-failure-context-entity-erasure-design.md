@@ -61,7 +61,20 @@ The engine writes `CASE_FAULTED` events from three distinct code paths, each wit
 
 `resolveFailureContext()` extracts `goalName`/`goalKind` from the terminal event when present (goal-triggered path). For the other two paths, `triggerGoalName` and `triggerGoalKind` are null — the failure chain events (`WORKER_EXECUTION_FAILED`, etc.) provide the diagnostic detail.
 
+**Multiple terminal events:** For the worker-retries-exhausted and timeout paths, the engine writes two `CASE_FAULTED` entries: one from the originating handler (`WorkerRetriesExhaustedEventHandler` / `CaseTimeoutEnforcer`) and a second from `CaseStatusChangedHandler` (triggered by the `CASE_STATUS_CHANGED` event bus message). The goal-triggered path produces only one. Disambiguation rule: iterate all CASE_FAULTED/CASE_CANCELLED entries; use the earliest timestamp for `occurredAt`; extract `goalName`/`goalKind` from whichever entry has them (at most one will).
+
 For `CASE_CANCELLED`, metadata always contains `oldStatus` and `newStatus` (written by `CaseStatusChangedHandler`).
+
+**Failure chain event metadata schemas:**
+
+| Event type | Handler | Metadata fields | `FailureEvent.detail` extraction |
+|---|---|---|---|
+| `WORKER_EXECUTION_FAILED` | `QuartzRetryService` | `inputDataHash`, `errorMessage` | `errorMessage` |
+| `WORKER_OUTCOME_FAILED` | `WorkflowExecutionCompletedHandler` | `bindingName`, `reason`, `attempts`, `disposition` | `reason` |
+| `ACTION_GATE_REJECTED` | `ActionGateRejectedHandler` | *(none)* | null |
+| `ACTION_GATE_EXPIRED` | `ActionGateExpiredHandler` | *(none)* | null |
+
+For all failure chain events, `workerId` is set directly on the `EventLog` entity (not in metadata) and maps to `FailureEvent.workerId`.
 
 ```java
 public record EntityErasureResult(
@@ -149,11 +162,27 @@ Orchestration:
 2. `AmlLedgerService.writeEntityErasure(entityId, reason, memoriesErased)` → `receiptEntryId`
 3. Return `EntityErasureResult(entityId, memoriesErased, receiptEntryId)`
 
-The ledger write uses `AmlLedgerService.writeEntityErasure()` (new method) following the established pattern in `writeCaseOpened()` / `writeSarOfficerReviewed()`: populate all `LedgerEntry` base fields (`id`, `subjectId`, `tenancyId`, `sequenceNumber`, `entryType`, `actorId`, `actorType`, `actorRole`, `occurredAt`) and call `LedgerEntryRepository.save()`.
+The ledger write uses `AmlLedgerService.writeEntityErasure()` (new method) following the established pattern in `writeCaseOpened()` / `writeSarOfficerReviewed()`: populate all `LedgerEntry` base fields and call `LedgerEntryRepository.save()`.
+
+**Base field values for entity erasure:**
+
+| Field | Value | Rationale |
+|-------|-------|-----------|
+| `id` | `UUID.randomUUID()` | Unique entry identifier |
+| `subjectId` | `UUID.nameUUIDFromBytes(...)` | Deterministic per entity (see below) |
+| `tenancyId` | `principal.tenancyId()` | From CDI request context |
+| `sequenceNumber` | `nextSequenceNumber(subjectId)` | Sequential per subject |
+| `entryType` | `LedgerEntryType.EVENT` | Matches other AML entries |
+| `actorId` | `principal.actorId()` | The compliance officer processing the GDPR request |
+| `actorType` | `principal.actorType()` | HUMAN for manual request, SYSTEM for automated |
+| `actorRole` | `"GdprComplianceOfficer"` | Distinguishes from other actor roles |
+| `occurredAt` | `Instant.now()` | Timestamp of erasure |
 
 **Deterministic `subjectId`** (design choice): `UUID.nameUUIDFromBytes(("aml-entity-erasure:" + entityId).getBytes(UTF_8))` produces a stable UUID per entity. All erasure records for the same entity share a `subjectId`, enabling `LedgerEntryRepository.findBySubjectId()` to return the complete erasure history for an entity. This is intentional — the `subjectId` provides queryability, not uniqueness (the entry's `id` provides uniqueness).
 
 **Cross-datasource ordering:** Memory erasure (default datasource) and ledger write (qhorus datasource) cannot share a transaction. Memory erasure runs first because the ledger receipt records `memoriesErased`. If the ledger write fails after memory erasure, GDPR compliance is achieved (data deleted) but the audit receipt is missing — the exception propagates to the caller, who can retry. The retry will produce `memoriesErased = 0` and a valid receipt.
+
+**Retry interpretation:** When multiple erasure entries share the same deterministic `subjectId`, the first entry with `memoriesErased > 0` is the authoritative count. Subsequent entries with `memoriesErased = 0` indicate a retry-after-partial-failure (ledger write failed on first attempt), not a no-op. This is queryable via `LedgerEntryRepository.findBySubjectId()` using the deterministic UUID.
 
 **Error handling:** If `CaseMemoryStore.eraseEntity()` throws, the exception propagates — no ledger entry is written, no partial state. The `NoOpCaseMemoryStore` (`@DefaultBean`) overrides `eraseEntity()` and returns 0, so it does not throw.
 
@@ -272,6 +301,7 @@ CREATE TABLE aml_entity_erasure_entry (
 - `AmlErasureServiceTest` additions:
   - `eraseEntity()` with memories present → verify count and receipt
   - `eraseEntity()` with no memories → verify `memoriesErased=0`, receipt still written
+- `AmlLedgerService.noOp()` and `AmlLedgerService.stub(UUID)` — add `writeEntityErasure()` override returning no-op / fixed UUID (prevents NPE in tests using these stubs)
 
 **Integration tests:**
 - Layer6 GET on FAULTED caseId → JSON includes failureContext
