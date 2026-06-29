@@ -142,7 +142,18 @@ Extracts `goalName`/`goalKind` from the terminal event's metadata JSON when pres
 
 `EventLogRepository.findByCaseAndTypes()` returns `Uni<List<EventLog>>` — call `.await().indefinitely()` to block, matching the existing pattern in `resolveInvestigation()` for `CaseInstanceRepository`.
 
-New dependency: `EventLogRepository` (engine-common, already on app classpath).
+New dependency: `EventLogRepository` (engine-common, already on app classpath). Constructor changes:
+
+```java
+@Inject
+public AmlInvestigationOutcomeService(
+        final LedgerEntryRepository ledgerEntryRepository,
+        final CaseInstanceCache caseInstanceCache,
+        final CaseInstanceRepository caseInstanceRepository,
+        final EventLogRepository eventLogRepository) {
+```
+
+The existing `AmlInvestigationOutcomeServiceTest.serviceWith()` helper needs a 4th parameter — a mock `EventLogRepository` returning `Uni.createFrom().item(List.of(...))` with seeded `EventLog` entries for failure context tests.
 
 **`AmlErasureService.eraseEntity()`:**
 
@@ -294,7 +305,8 @@ CREATE TABLE aml_entity_erasure_entry (
 
 **@QuarkusTest (app/ module):**
 - `AmlInvestigationOutcomeServiceTest` additions:
-  - FAULTED case: seed EventLog with `CASE_FAULTED` + `WORKER_EXECUTION_FAILED` → verify failureContext
+  - FAULTED case (goal-triggered): seed EventLog with one `CASE_FAULTED` (with `goalName`/`goalKind`) + `WORKER_EXECUTION_FAILED` → verify failureContext has triggerGoalName
+  - FAULTED case (retries exhausted): seed TWO `CASE_FAULTED` entries — first at T1 with `{workerId, inputDataHash}`, second at T2 (T2 > T1) with `{oldStatus, newStatus}` — + one `WORKER_EXECUTION_FAILED` → verify `occurredAt == T1`, `triggerGoalName == null`
   - CANCELLED case: seed EventLog with `CASE_CANCELLED` → verify failureContext with occurredAt
   - SUSPENDED case: verify both outcome and failureContext are null
   - COMPLETED case: verify failureContext is null (backward compat)
