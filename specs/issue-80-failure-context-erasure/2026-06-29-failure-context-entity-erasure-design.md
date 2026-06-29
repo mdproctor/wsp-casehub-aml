@@ -49,6 +49,20 @@ public record FailureEvent(
 
 `FailureEvent.detail` is a human-readable string extracted from the EventLog entry's `metadata` JSON — e.g., `"Failure goal 'pattern-agent-failed' satisfied"` or `"Gate expired after 30-day SLA"`. Null when metadata contains no actionable detail.
 
+**EventLog metadata schemas by fault path:**
+
+The engine writes `CASE_FAULTED` events from three distinct code paths, each with a different metadata schema:
+
+| Path | Handler | Metadata fields |
+|------|---------|----------------|
+| Goal-triggered fault | `CaseStatusChangedHandler` | `oldStatus`, `newStatus`, `goalName`, `goalKind` |
+| Worker retries exhausted | `WorkerRetriesExhaustedEventHandler` | `workerId`, `inputDataHash` |
+| Case timeout | `CaseTimeoutEnforcer` | `reason: "timeout"` |
+
+`resolveFailureContext()` extracts `goalName`/`goalKind` from the terminal event when present (goal-triggered path). For the other two paths, `triggerGoalName` and `triggerGoalKind` are null — the failure chain events (`WORKER_EXECUTION_FAILED`, etc.) provide the diagnostic detail.
+
+For `CASE_CANCELLED`, metadata always contains `oldStatus` and `newStatus` (written by `CaseStatusChangedHandler`).
+
 ```java
 public record EntityErasureResult(
     String entityId,
@@ -76,11 +90,11 @@ public record ActorErasureResult(
 `InvestigationOutcome` is unchanged — it retains its original review-decision semantics.
 
 **Invariants:**
-- COMPLETED: `outcome` non-null, `failureContext` null
-- FAILED/CANCELLED/SUSPENDED: `outcome` null, `failureContext` non-null
-- IN_PROGRESS: both null
+- COMPLETED: `outcome` from `resolveOutcome()` (null when no SAR review entry exists — a data-integrity anomaly, not a normal case), `failureContext` null
+- FAILED/CANCELLED: `outcome` null, `failureContext` non-null
+- SUSPENDED/IN_PROGRESS: both null
 
-Enforced by construction in `AmlInvestigationOutcomeService` (the single producer).
+Enforced by construction in `AmlInvestigationOutcomeService` (the single producer). SUSPENDED is not a failure — it is an intermediate pause like IN_PROGRESS.
 
 ### Service layer (app/ module)
 
@@ -98,9 +112,9 @@ InvestigationStatus status = switch (instance.getState()) {
 return switch (status) {
     case COMPLETED -> Optional.of(new InvestigationResolution(
         status, resolveOutcome(caseId), null));
-    case FAILED, CANCELLED, SUSPENDED -> Optional.of(new InvestigationResolution(
+    case FAILED, CANCELLED -> Optional.of(new InvestigationResolution(
         status, null, resolveFailureContext(caseId, status)));
-    case IN_PROGRESS -> Optional.of(new InvestigationResolution(
+    case IN_PROGRESS, SUSPENDED -> Optional.of(new InvestigationResolution(
         status, null, null));
 };
 ```
@@ -111,20 +125,37 @@ New method. Queries `EventLogRepository.findByCaseAndTypes()` for:
 - Terminal events: `CASE_FAULTED`, `CASE_CANCELLED`
 - Failure events: `WORKER_EXECUTION_FAILED`, `WORKER_OUTCOME_FAILED`, `ACTION_GATE_REJECTED`, `ACTION_GATE_EXPIRED`
 
-Extracts `goalName`/`goalKind` from the terminal event's metadata JSON (`metadata.goalName`, `metadata.goalKind`). Maps each failure event to a `FailureEvent` record. Returns `FailureContext` with the chain ordered by timestamp.
+Extracts `goalName`/`goalKind` from the terminal event's metadata JSON when present (goal-triggered fault path only — see metadata schema table above). Maps each failure event to a `FailureEvent` record. Returns `FailureContext` with the chain ordered by timestamp.
 
-For SUSPENDED: returns `FailureContext(null, null, List.of(), occurredAt)` — timestamp only, no failure chain.
+`EventLogRepository.findByCaseAndTypes()` returns `Uni<List<EventLog>>` — call `.await().indefinitely()` to block, matching the existing pattern in `resolveInvestigation()` for `CaseInstanceRepository`.
 
 New dependency: `EventLogRepository` (engine-common, already on app classpath).
 
 **`AmlErasureService.eraseEntity()`:**
 
-New method. Orchestrates:
-1. `CaseMemoryStore.eraseEntity(entityId, tenantId)` → count
-2. Write `AmlEntityErasureLedgerEntry` with `subjectId = UUID.nameUUIDFromBytes(("aml-entity-erasure:" + entityId).getBytes(UTF_8))`
-3. Return `EntityErasureResult(entityId, memoriesErased, receipt.id)`
+New method. Constructor changes — inject `CaseMemoryStore`, `CurrentPrincipal`, and `AmlLedgerService` alongside the existing `LedgerErasureService`:
 
-New dependencies: `CaseMemoryStore`, `CurrentPrincipal` (both already available in app context).
+```java
+@Inject
+public AmlErasureService(
+        final LedgerErasureService ledgerErasureService,
+        final CaseMemoryStore memoryStore,
+        final CurrentPrincipal principal,
+        final AmlLedgerService ledgerService) {
+```
+
+Orchestration:
+1. `CaseMemoryStore.eraseEntity(entityId, principal.tenancyId())` → `memoriesErased`
+2. `AmlLedgerService.writeEntityErasure(entityId, reason, memoriesErased)` → `receiptEntryId`
+3. Return `EntityErasureResult(entityId, memoriesErased, receiptEntryId)`
+
+The ledger write uses `AmlLedgerService.writeEntityErasure()` (new method) following the established pattern in `writeCaseOpened()` / `writeSarOfficerReviewed()`: populate all `LedgerEntry` base fields (`id`, `subjectId`, `tenancyId`, `sequenceNumber`, `entryType`, `actorId`, `actorType`, `actorRole`, `occurredAt`) and call `LedgerEntryRepository.save()`.
+
+**Deterministic `subjectId`** (design choice): `UUID.nameUUIDFromBytes(("aml-entity-erasure:" + entityId).getBytes(UTF_8))` produces a stable UUID per entity. All erasure records for the same entity share a `subjectId`, enabling `LedgerEntryRepository.findBySubjectId()` to return the complete erasure history for an entity. This is intentional — the `subjectId` provides queryability, not uniqueness (the entry's `id` provides uniqueness).
+
+**Cross-datasource ordering:** Memory erasure (default datasource) and ledger write (qhorus datasource) cannot share a transaction. Memory erasure runs first because the ledger receipt records `memoriesErased`. If the ledger write fails after memory erasure, GDPR compliance is achieved (data deleted) but the audit receipt is missing — the exception propagates to the caller, who can retry. The retry will produce `memoriesErased = 0` and a valid receipt.
+
+**Error handling:** If `CaseMemoryStore.eraseEntity()` throws, the exception propagates — no ledger entry is written, no partial state. The `NoOpCaseMemoryStore` (`@DefaultBean`) overrides `eraseEntity()` and returns 0, so it does not throw.
 
 ### REST API
 
@@ -144,6 +175,28 @@ public record Layer9InvestigationResponse(
     InvestigationOutcome outcome,
     FailureContext failureContext) {}
 ```
+
+**Resource handler changes:**
+
+`AmlLayer6Resource.getInvestigation()` — the non-COMPLETED path currently returns:
+```java
+new Layer6InvestigationResponse(caseId, r.status(), List.of(), null)
+```
+Changes to:
+```java
+new Layer6InvestigationResponse(caseId, r.status(), List.of(), null, r.failureContext())
+```
+The COMPLETED path changes to:
+```java
+new Layer6InvestigationResponse(caseId, r.status(), decisions, r.outcome(), null)
+```
+
+`AmlLayer9Resource.getInvestigation()` — currently returns `r.outcome()` unconditionally. Changes to:
+```java
+new Layer9InvestigationResponse(caseId, r.status(), r.outcome(), r.failureContext())
+```
+
+Both Layer6 and Layer9 pass through whatever `InvestigationResolution` provides — the invariant enforcement is in the service, not the resource.
 
 **New endpoint:**
 
@@ -214,7 +267,7 @@ CREATE TABLE aml_entity_erasure_entry (
 - `AmlInvestigationOutcomeServiceTest` additions:
   - FAULTED case: seed EventLog with `CASE_FAULTED` + `WORKER_EXECUTION_FAILED` → verify failureContext
   - CANCELLED case: seed EventLog with `CASE_CANCELLED` → verify failureContext with occurredAt
-  - SUSPENDED case: verify failureContext with occurredAt, empty events
+  - SUSPENDED case: verify both outcome and failureContext are null
   - COMPLETED case: verify failureContext is null (backward compat)
 - `AmlErasureServiceTest` additions:
   - `eraseEntity()` with memories present → verify count and receipt
