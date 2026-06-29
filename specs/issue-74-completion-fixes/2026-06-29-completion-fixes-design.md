@@ -1,8 +1,10 @@
 # Completion Detection Consolidation, Rejection Reason Capture, and Test Gaps
 
-**Issues:** #74, #75, #77
+**Issues:** #74, #73/#75, #77
 **Branch:** issue-74-completion-fixes
 **Date:** 2026-06-29
+
+> **Note:** #73 and #75 are duplicates (both capture rejection reason from #71 deferred work). This spec covers the full scope of both. Close #73 as duplicate when #75 is delivered.
 
 ---
 
@@ -29,15 +31,29 @@ public enum InvestigationStatus {
     IN_PROGRESS,
     COMPLETED;
 
-    @JsonValue
-    public String toJson() {
+    public String toWireFormat() {
         return name().toLowerCase().replace('_', '-');
     }
 
-    @JsonCreator
-    public static InvestigationStatus fromJson(String value) {
+    public static InvestigationStatus fromWireFormat(String value) {
         return valueOf(value.toUpperCase().replace('-', '_'));
     }
+}
+```
+
+No Jackson annotations — the `api/` module has zero framework dependencies (ARC42STORIES §5, §8). JSON binding is handled by a mixin registered in `AmlJacksonConfig` (same pattern as `SpecialistOutcome`):
+
+```java
+// In AmlJacksonConfig:
+abstract class InvestigationStatusMixin {
+    @JsonValue abstract String toWireFormat();
+    @JsonCreator static InvestigationStatus fromWireFormat(String value) { return null; }
+}
+
+@Override
+public void customize(ObjectMapper mapper) {
+    mapper.addMixIn(SpecialistOutcome.class, SpecialistOutcomeMixin.class);
+    mapper.addMixIn(InvestigationStatus.class, InvestigationStatusMixin.class);
 }
 ```
 
@@ -88,6 +104,8 @@ Changes from current:
 
 ### §2.1 `AmlInvestigationOutcomeService` (modified)
 
+**Package move:** `io.casehub.aml.compliance` → `io.casehub.aml.engine`. The consolidated service now composes engine state (cache/repo) with compliance outcome (ledger query). Both callers (`AmlLayer6Resource`, `AmlLayer9Resource`) are in `engine/`. The engine SPI deps (`CaseInstanceCache`, `CaseInstanceRepository`) are natural in this package. Keeping the service in `compliance/` would leak engine dependencies into a package that currently depends only on ledger.
+
 New dependencies (injected):
 - `CaseInstanceCache`
 - `CaseInstanceRepository`
@@ -113,7 +131,21 @@ public Optional<InvestigationResolution> resolveInvestigation(final UUID caseId)
 }
 ```
 
-Existing `resolve()` renamed to `resolveOutcome()`, made package-private. Internal logic unchanged except `fromReviewDecision` call gains `rejectionReason` parameter.
+Existing `resolve()` renamed to `resolveOutcome()`, made package-private. Updated to pass `rejectionReason` through to the two-arg factory:
+
+```java
+InvestigationOutcome resolveOutcome(final UUID caseId) {
+    return ledgerEntryRepository
+            .findBySubjectId(caseId, TenancyConstants.DEFAULT_TENANT_ID).stream()
+            .filter(AmlSarOfficerReviewedLedgerEntry.class::isInstance)
+            .map(AmlSarOfficerReviewedLedgerEntry.class::cast)
+            .min(HUMAN_FIRST_LATEST_SEQ)
+            .map(e -> InvestigationOutcome.fromReviewDecision(e.reviewDecision, e.rejectionReason))
+            .orElse(null);
+}
+```
+
+Data flow: `AmlSarOfficerReviewedLedgerEntry.rejectionReason` (§3.1) → `InvestigationOutcome.fromReviewDecision()` (§1.3) → `InvestigationOutcome.reason`.
 
 ---
 
@@ -126,7 +158,22 @@ Existing `resolve()` renamed to `resolveOutcome()`, made package-private. Intern
 public String rejectionReason;
 ```
 
-`domainContentBytes()` updated to pipe-delimited: `reviewDecision|rejectionReason`.
+`domainContentBytes()` updated with backward-compatible logic. Existing entries (where `rejectionReason` is null) must produce identical bytes to the pre-change implementation to preserve Merkle hash verification:
+
+```java
+@Override
+protected byte[] domainContentBytes() {
+    if (rejectionReason == null) {
+        return (reviewDecision != null ? reviewDecision : "")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+    return String.join("|",
+            reviewDecision != null ? reviewDecision : "",
+            rejectionReason).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+}
+```
+
+The pipe-delimited format is used only for new entries that carry a rejection reason. Entries without one produce the same bytes as before the change.
 
 ### §3.2 Flyway V2012
 
@@ -180,13 +227,18 @@ Replaces the HashMap serialization in Layer 9.
 
 ### §4.3 `AmlLayer6Resource.getInvestigation()` (simplified)
 
+**Return type change:** `Layer6InvestigationResponse` → `Response`. The current method signature `public Layer6InvestigationResponse getInvestigation(...)` cannot return a 404 `Response` object. The signature changes to `public Response getInvestigation(...)`. The happy path wraps the body in `Response.ok(...)`. All test assertions change from direct body assertions to `Response`-wrapped assertions.
+
 ```java
-final Optional<InvestigationResolution> resolution =
-        outcomeService.resolveInvestigation(caseId);
-if (resolution.isEmpty()) {
-    return Response.status(Response.Status.NOT_FOUND).build();
+public Response getInvestigation(@PathParam("caseId") UUID caseId) {
+    final Optional<InvestigationResolution> resolution =
+            outcomeService.resolveInvestigation(caseId);
+    if (resolution.isEmpty()) {
+        return Response.status(Response.Status.NOT_FOUND).build();
+    }
+    // ... build Layer6InvestigationResponse from resolution + routing decisions
+    return Response.ok(new Layer6InvestigationResponse(...)).build();
 }
-// ... build Layer6InvestigationResponse from resolution + routing decisions
 ```
 
 Removes duplicated completion detection. Layer 6-specific logic (worker decisions, trust scores) remains in the resource.
@@ -215,22 +267,36 @@ Nonexistent caseIds now return 404 instead of 200 with `"in-progress"`. This is 
 
 ### §5.1 `AmlInvestigationOutcomeServiceTest` (unit test)
 
-1. **Move package:** `io.casehub.aml.engine` → `io.casehub.aml.compliance` (matches class under test; enables package-private `resolveOutcome()` access)
+Test stays in `io.casehub.aml.engine` — matches the class under test after the §2.1 package move. `resolveOutcome()` is package-private and accessible from the test.
 
-2. **sequenceNumber tiebreaker test:** Two HUMAN entries with different `sequenceNumber` values — verify highest wins. Fix `officerEntry()` helper to accept `int sequenceNumber`.
+1. **sequenceNumber tiebreaker test:** Two HUMAN entries with different `sequenceNumber` values — verify highest wins. Fix `officerEntry()` helper to accept `int sequenceNumber`.
 
-3. **Failure-only scenario test:** Single SYSTEM entry with `reviewDecision = "REJECTED"` → outcome type `gate-rejected`. Exercises correction 4 path.
+2. **Failure-only scenario test:** Single SYSTEM entry with `reviewDecision = "REJECTED"` → outcome type `gate-rejected`. Exercises correction 4 path.
 
-4. **Update `officerEntry()` helper:** Accept `String rejectionReason` parameter for the two-arg factory.
+3. **Update `officerEntry()` helper:** Accept `String rejectionReason` parameter for the two-arg factory.
 
-### §5.2 `InvestigationOutcomeTest` (api/ unit test)
+### §5.2 `InvestigationOutcomeTest` and `InvestigationStatusTest` (api/ unit tests)
 
+**InvestigationOutcomeTest:**
 - Update for two-arg factory
 - Add test: `reason` populated for `gate-rejected`
 - Add test: `reason` null for `sar-filed`
-- Add test: null `reviewDecision` → `NullPointerException`
+- **Replace** existing `null_input_returns_null` test with: null `reviewDecision` → `NullPointerException` (the existing test asserts `assertNull(fromReviewDecision(null))` — contradicts the new NPE behavior)
+
+**InvestigationStatusTest (new):**
+- `IN_PROGRESS` → `toWireFormat()` returns `"in-progress"`
+- `COMPLETED` → `toWireFormat()` returns `"completed"`
+- `fromWireFormat("in-progress")` → `IN_PROGRESS`
+- `fromWireFormat("completed")` → `COMPLETED`
 
 ### §5.3 `AmlLayer9ResourceTest` (integration test)
+
+**Test infrastructure:** `AmlLayer9ResourceTest` currently has no gate-approval or work-item helpers. The following must be added (duplicated from `AmlLayer6ResourceTest` — not extracted to a shared utility, since the tests target different URL paths and response shapes):
+- `@PersistenceContext EntityManager defaultEm`
+- `@Inject WorkItemService workItemService`
+- `awaitAndApproveGate(UUID caseId)` — waits for gate work items, approves the first
+- `findGateWorkItems(UUID caseId)` — queries gate work items by callerRef pattern
+- `findComplianceReviewWorkItem(UUID caseId)` — queries compliance review work item by callerRef
 
 Two new tests:
 
@@ -244,6 +310,21 @@ Both use `awaitAndApproveGate()` pattern per GE-20260628-dbc656 (gate approval b
 
 Update existing tests for the 4-arg `writeSarOfficerReviewed()` signature. Add test verifying rejection reason is captured from event detail.
 
+**Test helper update:** The existing `event(WorkItemStatus, String, String)` helper always passes `null` as the `detail` parameter to `WorkItemLifecycleEvent.of()`. Add an overloaded helper:
+
+```java
+private WorkItemLifecycleEvent event(WorkItemStatus status, String callerRef,
+        String actor, String detail) {
+    WorkItem wi = new WorkItem();
+    wi.id = UUID.randomUUID();
+    wi.status = status;
+    wi.callerRef = callerRef;
+    return WorkItemLifecycleEvent.of(status.name(), wi, actor, detail);
+}
+```
+
+The existing 3-arg helper delegates to the new 4-arg helper with `null` detail. The rejection reason test uses the 4-arg helper with a non-null detail string.
+
 ### §5.5 Test ordering (GE-20260628-dbc656)
 
 Layer 9 tests with oversight gates must call `awaitAndApproveGate()` BEFORE waiting for attestations. `WorkerDecisionEvent` fires at worker completion, not dispatch — gated workers are not "complete" until the gate is approved.
@@ -254,25 +335,26 @@ Layer 9 tests with oversight gates must call `awaitAndApproveGate()` BEFORE wait
 
 | File | Change | Issue |
 |------|--------|-------|
-| `api/.../InvestigationStatus.java` | New enum | #74 |
+| `api/.../InvestigationStatus.java` | New enum (annotation-free, wire format methods) | #74 |
 | `api/.../InvestigationResolution.java` | New record | #74 |
 | `api/.../InvestigationOutcome.java` | Add reason, 2-arg factory, drop null handling | #74, #75 |
-| `app/.../AmlInvestigationOutcomeService.java` | Add resolveInvestigation(), new deps | #74 |
-| `app/.../AmlSarOfficerReviewedLedgerEntry.java` | Add rejectionReason field | #75 |
+| `app/.../AmlInvestigationOutcomeService.java` | Move compliance/ → engine/, add resolveInvestigation(), new deps | #74 |
+| `app/.../AmlJacksonConfig.java` | Add `InvestigationStatusMixin` | #74 |
+| `app/.../AmlSarOfficerReviewedLedgerEntry.java` | Add rejectionReason field, backward-compatible domainContentBytes() | #75 |
 | `app/.../V2012__*.sql` | Add rejection_reason column | #75 |
 | `app/.../AmlWorkItemLifecycleObserver.java` | Capture event.detail() | #75 |
-| `app/.../AmlLedgerService.java` | 4-arg write methods | #75 |
+| `app/.../AmlLedgerService.java` | 4-arg write methods, update noOp()/stub() overrides | #75 |
 | `app/.../Layer6InvestigationResponse.java` | String → InvestigationStatus | #74 |
 | `app/.../Layer9InvestigationResponse.java` | New record | #74 |
-| `app/.../AmlLayer6Resource.java` | Use resolveInvestigation(), 404 | #74 |
+| `app/.../AmlLayer6Resource.java` | Return type → Response, use resolveInvestigation(), 404 | #74 |
 | `app/.../AmlLayer9Resource.java` | Use resolveInvestigation(), typed response, 404 | #74 |
-| `app/test/.../AmlInvestigationOutcomeServiceTest.java` | Move package, add 3 tests | #77 |
-| `api/test/.../InvestigationOutcomeTest.java` | Update for 2-arg factory | #77 |
-| `app/test/.../AmlLayer9ResourceTest.java` | Add 2 outcome integration tests | #77 |
-| `app/test/.../AmlWorkItemLifecycleObserverTest.java` | Update for 4-arg signature | #77 |
+| `app/test/.../AmlInvestigationOutcomeServiceTest.java` | Add 3 tests (stays in engine/) | #77 |
+| `api/test/.../InvestigationOutcomeTest.java` | Update for 2-arg factory, replace null test | #77 |
+| `api/test/.../InvestigationStatusTest.java` | New — wire format roundtrip | #77 |
+| `app/test/.../AmlLayer9ResourceTest.java` | Add gate/review helpers, add 2 outcome integration tests | #77 |
+| `app/test/.../AmlWorkItemLifecycleObserverTest.java` | Update for 4-arg signature, add detail helper overload | #77 |
 
 ## Out of Scope
 
 - Refactoring `AmlLedgerService` internal duplication between `writeSarOfficerReviewed` and `writeSarOfficerReviewedFailure`
-- `AmlLedgerService` no-op/stub helpers — update their signatures mechanically
 - Sealed interface for `InvestigationOutcome` — evaluated and rejected; factory prevents invalid construction, no callers pattern-match in Java
