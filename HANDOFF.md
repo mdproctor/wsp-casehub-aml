@@ -1,4 +1,4 @@
-# Handoff — #74/#75/#77 closed (2026-06-29)
+# Handoff — #78/#62 closed (2026-06-29)
 
 ## What this project is
 
@@ -6,28 +6,26 @@
 
 ## This session (2026-06-29)
 
-Closed three issues on one branch: #74 (consolidate completion detection into `AmlInvestigationOutcomeService` with `InvestigationResolution` domain abstraction, 404 for nonexistent cases), #75 (rejection reason capture from `WorkItemLifecycleEvent.detail()` through ledger to `InvestigationOutcome.reason`), #77 (test gaps — sequenceNumber tiebreaker, failure-only scenario, Layer 9 integration tests). Adversarial design review ran 5 rounds (19 issues) — caught Merkle hash backward compat, Jackson mixin for api/ zero-framework constraint, and service package move from compliance/ to engine/. Also filed #78 (FAULTED/CANCELLED mapped to IN_PROGRESS — pre-existing, not a regression) and #73 closed as duplicate of #75.
+Closed two issues on one branch: #78 (InvestigationStatus exhaustive projection — FAILED, CANCELLED, SUSPENDED replace the lossy if-check with a no-default switch expression) and #62 (GDPR Art.17 erasure receipt — AmlErasureService wraps LedgerErasureService, GdprErasureRequirement upgraded from static booleans to live config/receipt queries, erasure receipt enabled via foundation V1010 migration). Design review (7 rounds, 24 issues, $18.11) caught the actorId/entityId mismatch that would have made memory erasure a silent no-op — removed from the design. Filed ledger#160 (countByTenant SPI method, shipped same session). Filed 4 deferred issues: #79 (entity-level memory erasure), #80 (failure context on terminal status), #81 (retention expiry), #82 (Art.22 decision records).
 
 ## Immediate next step
 
-No open branch. Pick next work from backlog — #62 (GDPR erasure receipt) is unblocked. #14 (Layer 10 LLM supervisor) still blocked on engine#101.
-
-## What's left
-
-- #78 — InvestigationStatus should distinguish FAULTED/CANCELLED from IN_PROGRESS · XS · Low
+No open branch. Pick next work from backlog — #79 (entity-level memory erasure) is the natural follow-on from #62. #80 (failure context) is a follow-on from #78.
 
 ## What's next
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
-| #62 | GDPR Art.17 erasure receipt — tamper-evident record | M | Med | Unblocked |
-| #78 | InvestigationStatus FAULTED/CANCELLED handling | XS | Low | |
+| #79 | Entity-level memory erasure (GDPR by account ID) | M | Med | Follow-on from #62 |
+| #80 | Failure context on terminal InvestigationStatus | S | Low | Follow-on from #78 |
+| #81 | Automated retention expiry | M | Med | |
+| #82 | GDPR Art.22 decision record compliance supplements | M | Med | |
 | #72 | Gate rejection routing — re-open or close on MLRO rejection | M | High | Blocked on #14 / Layer 10 |
 | #14 | Layer 10 — LLM supervisor mode | L | High | Blocked on engine#101 |
 
 ## References
 
-- Spec: `docs/specs/issue-74-completion-fixes/2026-06-29-completion-fixes-design.md`
-- Blog: `blog/2026-06-29-mdp02-the-missing-abstraction.md`
-- Garden: GE-20260629-0d981d (Layer 9 has no SAR outcomes — oversight gate only)
-- Adversarial review: `~/adr/casehub-aml/completion-fixes-20260629-034108/`
+- Spec: `docs/specs/issue-78-status-erasure/2026-06-29-status-erasure-design.md`
+- Blog: `blog/2026-06-29-mdp02-the-projection-not-a-lifecycle.md`
+- Design review: `~/adr/casehub-aml/status-erasure-20260629-*/tracker.md`
+- Garden: GE-20260628-6599e6 (actor-scoped erasure receipt queries fail post-tokenisation)
