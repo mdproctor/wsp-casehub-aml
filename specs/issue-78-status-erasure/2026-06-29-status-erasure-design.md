@@ -26,21 +26,41 @@ Covers: #78 (InvestigationStatus FAULTED/CANCELLED), #62 (GDPR Art.17 erasure re
 
 **Mapping** (app/ module, `AmlInvestigationOutcomeService.resolveInvestigation()`):
 
-Replace the `if (instance.getState() != CaseStatus.COMPLETED)` check with:
+Replace the `if (instance.getState() != CaseStatus.COMPLETED)` branch with an exhaustive switch. Full updated method body:
 
 ```java
-InvestigationStatus status = switch (instance.getState()) {
-    case STARTING, RUNNING, WAITING -> InvestigationStatus.IN_PROGRESS;
-    case COMPLETED -> InvestigationStatus.COMPLETED;
-    case FAULTED -> InvestigationStatus.FAILED;
-    case CANCELLED -> InvestigationStatus.CANCELLED;
-    case SUSPENDED -> InvestigationStatus.SUSPENDED;
-};
+public Optional<InvestigationResolution> resolveInvestigation(final UUID caseId) {
+    CaseInstance instance = caseInstanceCache.get(caseId);
+    if (instance == null) {
+        instance = caseInstanceRepository
+                .findByUuid(caseId, TenancyConstants.DEFAULT_TENANT_ID)
+                .await().indefinitely();
+    }
+    if (instance == null) {
+        return Optional.empty();
+    }
+
+    // No default arm — intentionally causes a compilation failure when
+    // CaseStatus gains new values, forcing explicit mapping.
+    InvestigationStatus status = switch (instance.getState()) {
+        case STARTING, RUNNING, WAITING -> InvestigationStatus.IN_PROGRESS;
+        case COMPLETED -> InvestigationStatus.COMPLETED;
+        case FAULTED -> InvestigationStatus.FAILED;
+        case CANCELLED -> InvestigationStatus.CANCELLED;
+        case SUSPENDED -> InvestigationStatus.SUSPENDED;
+    };
+
+    if (status != InvestigationStatus.COMPLETED) {
+        return Optional.of(new InvestigationResolution(status, null));
+    }
+    final InvestigationOutcome outcome = resolveOutcome(caseId);
+    return Optional.of(new InvestigationResolution(InvestigationStatus.COMPLETED, outcome));
+}
 ```
 
-No `default` arm — intentionally causes a compilation failure when `CaseStatus` gains new values, forcing explicit mapping. This constraint must be preserved; adding `default -> IN_PROGRESS` would restore the silent-mapping problem this spec eliminates.
+The no-default constraint must be preserved; adding `default -> IN_PROGRESS` would restore the silent-mapping problem this spec eliminates.
 
-For non-COMPLETED terminal states (FAILED, CANCELLED), outcome is null — no SAR officer review occurred. `InvestigationResolution(status, outcome)` handles this correctly without changes.
+For non-COMPLETED terminal states (FAILED, CANCELLED), outcome is null — no SAR officer review occurred. The if/else structure after the switch preserves the existing conditional: only COMPLETED cases call `resolveOutcome()` to look up SAR officer review entries.
 
 **Status semantics:** `InvestigationStatus` values divide into terminal and non-terminal:
 - **Terminal:** `COMPLETED`, `FAILED`, `CANCELLED` — the investigation will not advance further
@@ -125,7 +145,9 @@ public AmlErasureResult eraseActor(@PathParam("actorId") String actorId) {
 long countByTenant(String tenancyId);
 ```
 
-Implementation in `JpaErasureReceiptRepository`:
+All three implementations:
+
+`JpaErasureReceiptRepository`:
 
 ```java
 @Override
@@ -138,7 +160,28 @@ public long countByTenant(String tenancyId) {
 }
 ```
 
-This keeps the count query in the SPI that owns erasure receipt reads, consistent with the existing `findByErasedActorId` method.
+`NoOpErasureReceiptRepository` (`@DefaultBean`):
+
+```java
+@Override
+public long countByTenant(String tenancyId) {
+    return 0L;
+}
+```
+
+`InMemoryErasureReceiptRepository` (`@Alternative @Priority(1)`):
+
+```java
+@Override
+public long countByTenant(String tenancyId) {
+    return blocking.allEntries().stream()
+            .filter(e -> e instanceof ErasureReceiptLedgerEntry)
+            .filter(e -> tenancyId.equals(e.tenancyId))
+            .count();
+}
+```
+
+This keeps the count query in the SPI that owns erasure receipt reads, consistent with the existing `findByErasedActorId` method. All three implementations follow the same pattern as `findByErasedActorId`: JPA uses JPQL, NoOp returns empty/zero, InMemory filters the backing `allEntries()` store.
 
 #### Compliance evidence enhancement
 
@@ -193,7 +236,13 @@ public AmlComplianceEvidenceService(
 private GdprErasureRequirement buildGdprErasure() {
     boolean tokenisationEnabled = ledgerConfig.identity().tokenisation().enabled();
     boolean receiptEnabled = ledgerConfig.erasureReceipt().enabled();
-    long receiptCount = erasureReceiptRepo.countByTenant(TenancyConstants.DEFAULT_TENANT_ID);
+
+    long receiptCount = 0L;
+    try {
+        receiptCount = erasureReceiptRepo.countByTenant(TenancyConstants.DEFAULT_TENANT_ID);
+    } catch (Exception ignored) {
+        // DB unreachable — degrade gracefully, count stays 0
+    }
 
     RequirementStatus status;
     if (tokenisationEnabled && receiptEnabled) {
@@ -212,6 +261,8 @@ private GdprErasureRequirement buildGdprErasure() {
             GdprErasureRequirement.ERASURE_ENDPOINT);
 }
 ```
+
+The `countByTenant()` call is wrapped in try/catch to match the error resilience pattern of sibling methods (`buildAuditChain()` catches `IllegalStateException` from `verificationService.verify()`). Config flag reads (`LedgerConfig`) are local and infallible. Without this, a DB failure would take down the entire compliance evidence endpoint instead of degrading the GDPR section gracefully.
 
 No PU conflict — `ErasureReceiptRepository` manages its own EntityManager injection (qhorus PU), same as `LedgerEntryRepository` which is already injected.
 
@@ -242,7 +293,8 @@ No PU conflict — `ErasureReceiptRepository` manages its own EntityManager inje
 - **AmlErasureService happy path:** ledger erasure succeeds — `AmlErasureResult` reflects all fields from `ErasureResult`
 - **AmlErasureResult mapping:** verify `Optional<UUID>` to nullable `UUID` conversion for `receiptEntryId`
 - **buildGdprErasure() config combinations:** test CLOSED (both enabled), PARTIAL (one enabled), GAP (neither)
-- **Erasure receipt count:** verify `ErasureReceiptRepository.countByTenant()` returns correct count
+- **buildGdprErasure() DB failure:** verify `countByTenant()` exception degrades gracefully — status still correct, `receiptCount` defaults to 0
+- **Erasure receipt count:** verify `ErasureReceiptRepository.countByTenant()` returns correct count across all implementations (JPA, InMemory, NoOp)
 - **REST endpoint:** integration test — POST returns `AmlErasureResult` with receipt ID when receipt enabled
 - **MECHANISM constant:** verify updated text reflects new capabilities
 
