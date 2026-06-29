@@ -2,6 +2,7 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-06-29-mdp02-the-missing-abstraction.md](2026-06-29-mdp02-the-missing-abstraction.md) | 2026-06-29 | The missing domain abstraction between engine and ledger — InvestigationResolution, Merkle backward compat, Layer 9 has no SAR outcomes |
 | [2026-06-29-mdp01-what-the-officer-decided.md](2026-06-29-mdp01-what-the-officer-decided.md) | 2026-06-29 | Lifecycle vs outcome — gate rejection surfacing, adversarial review catches data corruption masking and discarded decisions |
 | [2026-06-23-mdp01-four-rounds-two-workers.md](2026-06-23-mdp01-four-rounds-two-workers.md) | 2026-06-23 | Four review rounds to get a two-worker migration right — wrong test claims, missing scope, PlannedAction gap, SNAPSHOT corruption |
 | [2026-06-22-mdp01-cache-gaps-and-workflow-context.md](2026-06-22-mdp01-cache-gaps-and-workflow-context.md) | 2026-06-22 | Cache eviction fallback + FuncWorkflowBuilder migration — why the flow path doesn't set WorkerExecutionContext |
