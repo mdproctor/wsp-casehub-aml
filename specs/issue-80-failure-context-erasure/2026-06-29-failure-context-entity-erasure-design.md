@@ -284,7 +284,7 @@ public class AmlEntityErasureLedgerEntry extends LedgerEntry {
 
 ```sql
 CREATE TABLE aml_entity_erasure_entry (
-    id BIGINT NOT NULL,
+    id UUID NOT NULL,
     erased_entity_id VARCHAR(255) NOT NULL,
     erasure_reason VARCHAR(50) NOT NULL,
     memories_erased INT NOT NULL,
