@@ -169,11 +169,11 @@ public AmlErasureService(
 ```
 
 Orchestration:
-1. `CaseMemoryStore.eraseEntity(entityId, principal.tenancyId())` → `memoriesErased`
-2. `AmlLedgerService.writeEntityErasure(entityId, reason, memoriesErased)` → `receiptEntryId`
+1. `CaseMemoryStore.eraseEntity(entityId, TenancyConstants.DEFAULT_TENANT_ID)` → `memoriesErased`
+2. `AmlLedgerService.writeEntityErasure(entityId, reason, memoriesErased, principal.actorId(), principal.actorType())` → `receiptEntryId`
 3. Return `EntityErasureResult(entityId, memoriesErased, receiptEntryId)`
 
-The ledger write uses `AmlLedgerService.writeEntityErasure()` (new method) following the established pattern in `writeCaseOpened()` / `writeSarOfficerReviewed()`: populate all `LedgerEntry` base fields and call `LedgerEntryRepository.save()`.
+The ledger write uses `AmlLedgerService.writeEntityErasure()` (new method) following the established pattern in `writeCaseOpened()` / `writeSarOfficerReviewed()`: populate all `LedgerEntry` base fields and call `LedgerEntryRepository.save(entry, TenancyConstants.DEFAULT_TENANT_ID)`. Actor identity is passed as parameters from the caller (matching the `writeSarOfficerReviewed(caseId, officerId, ...)` pattern — `AmlLedgerService` does not inject `CurrentPrincipal`).
 
 **Base field values for entity erasure:**
 
@@ -181,11 +181,11 @@ The ledger write uses `AmlLedgerService.writeEntityErasure()` (new method) follo
 |-------|-------|-----------|
 | `id` | `UUID.randomUUID()` | Unique entry identifier |
 | `subjectId` | `UUID.nameUUIDFromBytes(...)` | Deterministic per entity (see below) |
-| `tenancyId` | `principal.tenancyId()` | From CDI request context |
+| `tenancyId` | `TenancyConstants.DEFAULT_TENANT_ID` | Matches all existing `AmlLedgerService` methods; multi-tenant deferred to #84 |
 | `sequenceNumber` | `nextSequenceNumber(subjectId)` | Sequential per subject |
 | `entryType` | `LedgerEntryType.EVENT` | Matches other AML entries |
-| `actorId` | `principal.actorId()` | The compliance officer processing the GDPR request |
-| `actorType` | `principal.actorType()` | HUMAN for manual request, SYSTEM for automated |
+| `actorId` | caller-provided `actorId` | The compliance officer processing the GDPR request |
+| `actorType` | caller-provided `actorType` | HUMAN for manual request, SYSTEM for automated |
 | `actorRole` | `"GdprComplianceOfficer"` | Distinguishes from other actor roles |
 | `occurredAt` | `Instant.now()` | Timestamp of erasure |
 
