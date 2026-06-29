@@ -41,7 +41,7 @@ public enum InvestigationStatus {
 }
 ```
 
-No Jackson annotations — the `api/` module has zero framework dependencies (ARC42STORIES §5, §8). JSON binding is handled by a mixin registered in `AmlJacksonConfig` (same pattern as `SpecialistOutcome`):
+No Jackson annotations — the `api/` module has zero framework dependencies (ARC42STORIES §5, §8). JSON binding is handled by a mixin registered in `AmlJacksonConfig` (same registration mechanism as `SpecialistOutcome` — `mapper.addMixIn()` — but different annotations: `@JsonValue`/`@JsonCreator` for enum value mapping vs `@JsonTypeInfo`/`@JsonSubTypes` for polymorphic type discrimination):
 
 ```java
 // In AmlJacksonConfig:
@@ -229,6 +229,8 @@ Replaces the HashMap serialization in Layer 9.
 
 **Return type change:** `Layer6InvestigationResponse` → `Response`. The current method signature `public Layer6InvestigationResponse getInvestigation(...)` cannot return a 404 `Response` object. The signature changes to `public Response getInvestigation(...)`. The happy path wraps the body in `Response.ok(...)`. All test assertions change from direct body assertions to `Response`-wrapped assertions.
 
+**Removed injections:** `CaseInstanceCache` and `CaseInstanceRepository` are removed from this resource — completion detection is now in `AmlInvestigationOutcomeService`. Only `outcomeService`, `workerDecisionRepo`, `sarOutcomeEvent`, and `trustScoreSource` remain.
+
 ```java
 public Response getInvestigation(@PathParam("caseId") UUID caseId) {
     final Optional<InvestigationResolution> resolution =
@@ -236,14 +238,31 @@ public Response getInvestigation(@PathParam("caseId") UUID caseId) {
     if (resolution.isEmpty()) {
         return Response.status(Response.Status.NOT_FOUND).build();
     }
-    // ... build Layer6InvestigationResponse from resolution + routing decisions
-    return Response.ok(new Layer6InvestigationResponse(...)).build();
+    final InvestigationResolution r = resolution.get();
+    if (r.status() != InvestigationStatus.COMPLETED) {
+        return Response.ok(new Layer6InvestigationResponse(
+                caseId, r.status(), List.of(), null)).build();
+    }
+    final List<WorkerDecisionEntry> entries = workerDecisionRepo.findAllByCaseId(caseId);
+    final List<WorkerRoutingDecision> decisions = entries.stream()
+            .map(e -> {
+                final OptionalDouble score =
+                        trustScoreSource.capabilityScore(e.workerId, e.capabilityTag);
+                return new WorkerRoutingDecision(
+                        e.capabilityTag, e.workerId,
+                        score.isPresent() ? score.getAsDouble() : null);
+            })
+            .toList();
+    return Response.ok(new Layer6InvestigationResponse(
+            caseId, r.status(), decisions, r.outcome())).build();
 }
 ```
 
-Removes duplicated completion detection. Layer 6-specific logic (worker decisions, trust scores) remains in the resource.
+Routing decisions and trust scores are only queried for completed cases — in-progress cases return `List.of()` for decisions and `null` for outcome, avoiding an unnecessary database hit to `AmlWorkerDecisionRepository`.
 
 ### §4.4 `AmlLayer9Resource.getInvestigation()` (simplified)
+
+**Removed injections:** `CaseInstanceCache` and `CaseInstanceRepository` are removed — completion detection is now in `AmlInvestigationOutcomeService`. Only `coordinator` and `outcomeService` remain.
 
 ```java
 final Optional<InvestigationResolution> resolution =
@@ -269,11 +288,25 @@ Nonexistent caseIds now return 404 instead of 200 with `"in-progress"`. This is 
 
 Test stays in `io.casehub.aml.engine` — matches the class under test after the §2.1 package move. `resolveOutcome()` is package-private and accessible from the test.
 
+**Update `serviceWith()` helper:** The constructor gains `CaseInstanceCache` and `CaseInstanceRepository` parameters. The helper must be updated to pass all three dependencies. For `resolveOutcome()` tests, the cache and repo can be null (those tests only exercise the ledger query path). For `resolveInvestigation()` tests, stub implementations are needed.
+
+**Existing test updates:**
+
 1. **sequenceNumber tiebreaker test:** Two HUMAN entries with different `sequenceNumber` values — verify highest wins. Fix `officerEntry()` helper to accept `int sequenceNumber`.
 
 2. **Failure-only scenario test:** Single SYSTEM entry with `reviewDecision = "REJECTED"` → outcome type `gate-rejected`. Exercises correction 4 path.
 
 3. **Update `officerEntry()` helper:** Accept `String rejectionReason` parameter for the two-arg factory.
+
+**New `resolveInvestigation()` unit tests:**
+
+4. **Cache hit, completed → COMPLETED with outcome:** Stub cache to return a COMPLETED `CaseInstance`, verify `resolveInvestigation()` returns `InvestigationResolution(COMPLETED, outcome)`.
+
+5. **Cache hit, not completed → IN_PROGRESS:** Stub cache to return a non-completed `CaseInstance`, verify returns `InvestigationResolution(IN_PROGRESS, null)`.
+
+6. **Cache miss, repo hit → delegates to repo:** Stub cache to return null, stub repo to return a COMPLETED `CaseInstance`, verify returns COMPLETED.
+
+7. **Cache miss, repo miss → empty (404):** Both cache and repo return null, verify `Optional.empty()`.
 
 ### §5.2 `InvestigationOutcomeTest` and `InvestigationStatusTest` (api/ unit tests)
 
@@ -283,11 +316,33 @@ Test stays in `io.casehub.aml.engine` — matches the class under test after the
 - Add test: `reason` null for `sar-filed`
 - **Replace** existing `null_input_returns_null` test with: null `reviewDecision` → `NullPointerException` (the existing test asserts `assertNull(fromReviewDecision(null))` — contradicts the new NPE behavior)
 
-**InvestigationStatusTest (new):**
+**InvestigationStatusTest (new, api/):**
 - `IN_PROGRESS` → `toWireFormat()` returns `"in-progress"`
 - `COMPLETED` → `toWireFormat()` returns `"completed"`
 - `fromWireFormat("in-progress")` → `IN_PROGRESS`
 - `fromWireFormat("completed")` → `COMPLETED`
+
+**InvestigationStatusMixinTest (new, app/):**
+
+Tests the actual Jackson mixin wiring, not just the Java methods the mixin delegates to. A mixin misconfiguration (wrong method signature, missing `addMixIn` call) would pass the api/ unit tests while silently serializing `IN_PROGRESS` as `"IN_PROGRESS"` in production.
+
+```java
+@Test
+void jackson_serializes_via_mixin() throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+    new AmlJacksonConfig().customize(mapper);
+    assertEquals("\"in-progress\"", mapper.writeValueAsString(InvestigationStatus.IN_PROGRESS));
+    assertEquals("\"completed\"", mapper.writeValueAsString(InvestigationStatus.COMPLETED));
+}
+
+@Test
+void jackson_deserializes_via_mixin() throws Exception {
+    ObjectMapper mapper = new ObjectMapper();
+    new AmlJacksonConfig().customize(mapper);
+    assertEquals(InvestigationStatus.IN_PROGRESS, mapper.readValue("\"in-progress\"", InvestigationStatus.class));
+    assertEquals(InvestigationStatus.COMPLETED, mapper.readValue("\"completed\"", InvestigationStatus.class));
+}
+```
 
 ### §5.3 `AmlLayer9ResourceTest` (integration test)
 
@@ -346,11 +401,12 @@ Layer 9 tests with oversight gates must call `awaitAndApproveGate()` BEFORE wait
 | `app/.../AmlLedgerService.java` | 4-arg write methods, update noOp()/stub() overrides | #75 |
 | `app/.../Layer6InvestigationResponse.java` | String → InvestigationStatus | #74 |
 | `app/.../Layer9InvestigationResponse.java` | New record | #74 |
-| `app/.../AmlLayer6Resource.java` | Return type → Response, use resolveInvestigation(), 404 | #74 |
-| `app/.../AmlLayer9Resource.java` | Use resolveInvestigation(), typed response, 404 | #74 |
-| `app/test/.../AmlInvestigationOutcomeServiceTest.java` | Add 3 tests (stays in engine/) | #77 |
+| `app/.../AmlLayer6Resource.java` | Return type → Response, use resolveInvestigation(), remove unused cache/repo injections, 404 | #74 |
+| `app/.../AmlLayer9Resource.java` | Use resolveInvestigation(), typed response, remove unused cache/repo injections, 404 | #74 |
+| `app/test/.../AmlInvestigationOutcomeServiceTest.java` | Update serviceWith() constructor, add 4 resolveInvestigation() tests, add 3 resolveOutcome() tests (stays in engine/) | #77 |
 | `api/test/.../InvestigationOutcomeTest.java` | Update for 2-arg factory, replace null test | #77 |
 | `api/test/.../InvestigationStatusTest.java` | New — wire format roundtrip | #77 |
+| `app/test/.../InvestigationStatusMixinTest.java` | New — Jackson mixin wiring verification | #77 |
 | `app/test/.../AmlLayer9ResourceTest.java` | Add gate/review helpers, add 2 outcome integration tests | #77 |
 | `app/test/.../AmlWorkItemLifecycleObserverTest.java` | Update for 4-arg signature, add detail helper overload | #77 |
 
