@@ -229,7 +229,7 @@ Replaces the HashMap serialization in Layer 9.
 
 **Return type change:** `Layer6InvestigationResponse` → `Response`. The current method signature `public Layer6InvestigationResponse getInvestigation(...)` cannot return a 404 `Response` object. The signature changes to `public Response getInvestigation(...)`. The happy path wraps the body in `Response.ok(...)`. All test assertions change from direct body assertions to `Response`-wrapped assertions.
 
-**Removed injections:** `CaseInstanceCache` and `CaseInstanceRepository` are removed from this resource — completion detection is now in `AmlInvestigationOutcomeService`. Only `outcomeService`, `workerDecisionRepo`, `sarOutcomeEvent`, and `trustScoreSource` remain.
+**Removed injections:** `CaseInstanceCache` and `CaseInstanceRepository` are removed from this resource — completion detection is now in `AmlInvestigationOutcomeService`. Only `coordinator`, `outcomeService`, `workerDecisionRepo`, `sarOutcomeEvent`, and `trustScoreSource` remain.
 
 ```java
 public Response getInvestigation(@PathParam("caseId") UUID caseId) {
@@ -344,16 +344,30 @@ void jackson_deserializes_via_mixin() throws Exception {
 }
 ```
 
-### §5.3 `AmlLayer9ResourceTest` (integration test)
+### §5.3 `AmlLayer6ResourceTest` and `AmlLayer9ResourceTest` (integration tests)
 
-**Test infrastructure:** `AmlLayer9ResourceTest` currently has no gate-approval or work-item helpers. The following must be added (duplicated from `AmlLayer6ResourceTest` — not extracted to a shared utility, since the tests target different URL paths and response shapes):
+**404 regression tests (both resources):**
+
+The §4.5 behavioral change (nonexistent caseIds return 404 instead of 200 with `"in-progress"`) is the bug fix that motivated #74. Neither test class currently GETs a nonexistent caseId — all existing tests create a case first. Both resources need a regression test:
+
+```java
+@Test
+void get_nonexistent_investigation_returns_404() {
+    given().when().get("/api/layer6/investigations/" + UUID.randomUUID())
+            .then().statusCode(404);
+}
+```
+
+Same test in `AmlLayer9ResourceTest` with the `/api/layer9/investigations/` path.
+
+**Layer 9 test infrastructure:** `AmlLayer9ResourceTest` currently has no gate-approval or work-item helpers. The following must be added (duplicated from `AmlLayer6ResourceTest` — not extracted to a shared utility, since the tests target different URL paths and response shapes):
 - `@PersistenceContext EntityManager defaultEm`
 - `@Inject WorkItemService workItemService`
 - `awaitAndApproveGate(UUID caseId)` — waits for gate work items, approves the first
 - `findGateWorkItems(UUID caseId)` — queries gate work items by callerRef pattern
 - `findComplianceReviewWorkItem(UUID caseId)` — queries compliance review work item by callerRef
 
-Two new tests:
+**Layer 9 new outcome tests:**
 
 1. **`officer_approval_surfaces_sar_filed_outcome`:** Start via Layer 9, await gate, complete officer review, assert `outcome.type == "sar-filed"`.
 
@@ -407,7 +421,8 @@ Layer 9 tests with oversight gates must call `awaitAndApproveGate()` BEFORE wait
 | `api/test/.../InvestigationOutcomeTest.java` | Update for 2-arg factory, replace null test | #77 |
 | `api/test/.../InvestigationStatusTest.java` | New — wire format roundtrip | #77 |
 | `app/test/.../InvestigationStatusMixinTest.java` | New — Jackson mixin wiring verification | #77 |
-| `app/test/.../AmlLayer9ResourceTest.java` | Add gate/review helpers, add 2 outcome integration tests | #77 |
+| `app/test/.../AmlLayer6ResourceTest.java` | Add 404 regression test for nonexistent caseId | #77 |
+| `app/test/.../AmlLayer9ResourceTest.java` | Add gate/review helpers, add 2 outcome integration tests, add 404 regression test | #77 |
 | `app/test/.../AmlWorkItemLifecycleObserverTest.java` | Update for 4-arg signature, add detail helper overload | #77 |
 
 ## Out of Scope
