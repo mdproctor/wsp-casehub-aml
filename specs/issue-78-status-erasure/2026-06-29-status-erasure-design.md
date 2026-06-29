@@ -277,7 +277,7 @@ No PU conflict — `ErasureReceiptRepository` manages its own EntityManager inje
 - Entity data erasure (erasing memory about investigated subjects by account ID rather than actor ID) — different use case, different endpoint. **GitHub issue to be filed during implementation.**
 - Automated retention expiry — `ErasureReason.RETENTION_EXPIRED` is available but no scheduled job exists. **GitHub issue to be filed during implementation.**
 - Investigation failure context enrichment (fault reason, cancellation justification on `InvestigationResolution`) — available through engine's `CaseInstance` APIs; enrichment is a separate concern from status projection. **GitHub issue to be filed during implementation.**
-- GDPR Art.22 decision record compliance supplements — separate Layer 7 concern
+- GDPR Art.22 decision record compliance supplements — separate Layer 7 concern. **GitHub issue to be filed during implementation.**
 
 ## Test Specification
 
