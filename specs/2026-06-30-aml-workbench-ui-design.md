@@ -661,16 +661,16 @@ Items explicitly out of scope for this spec, tracked as GitHub issues:
 
 | Concern | Issue | Notes |
 |---------|-------|-------|
-| Authentication and role-based UI access | To be filed in casehub-aml | `withAccess()` mechanism available in casehub-pages |
-| Trust score historical trend persistence | To be filed in casehub-aml | `TrustScoreCache` holds current scores only; trend timeseries needs snapshot persistence |
+| Authentication and role-based UI access | casehubio/aml#86 | `withAccess()` mechanism available in casehub-pages |
+| Trust score historical trend persistence | casehubio/aml#87 | `TrustScoreCache` holds current scores only; trend timeseries needs snapshot persistence |
 | WorkItem query API design | casehubio/work#241 (existing) | Rich lifecycle, pagination, tenant scoping — deserves its own spec |
-| Ledger entry query endpoint | To be filed in casehub-ledger | `GET /api/ledger/entries?subjectId={id}` |
-| Ledger proof REST endpoint | To be filed in casehub-ledger | `GET /api/ledger/entries/{id}/proof` |
-| WorkItem escalate endpoint | To be filed in casehub-work | `POST /api/work-items/{id}/escalate` |
-| WorkItem complete endpoint | To be filed in casehub-work | `POST /api/work-items/{id}/complete` |
-| `ComplianceReviewLifecycle` scope update | To be filed in casehub-aml | Add `.scope("casehubio/aml/oversight")` to `openReview()` WorkItem creation — required for unified work queue filtering |
-| WebSocket/SSE real-time updates | To be filed in casehub-aml | Replace polling with push when scale demands it |
-| casehub-pages consumption model verification | To be filed in casehub-pages | Verify DSL API vs iframe embedding — see §Parameterised Dataset URLs |
+| Ledger entry query endpoint | casehubio/ledger#162 | `GET /api/ledger/entries?subjectId={id}` |
+| Ledger proof REST endpoint | casehubio/ledger#162 | `GET /api/ledger/entries/{id}/proof` |
+| WorkItem escalate endpoint | casehubio/work#284 | `POST /api/work-items/{id}/escalate` |
+| WorkItem complete endpoint | casehubio/work#284 | `POST /api/work-items/{id}/complete` |
+| `ComplianceReviewLifecycle` scope update | casehubio/aml#88 | Add `.scope("casehubio/aml/oversight")` to `openReview()` WorkItem creation — required for unified work queue filtering |
+| WebSocket/SSE real-time updates | casehubio/aml#89 | Replace polling with push when scale demands it |
+| casehub-pages consumption model verification | casehubio/aml#90 | Verify DSL API vs iframe embedding — see §Parameterised Dataset URLs |
 
 ---
 
