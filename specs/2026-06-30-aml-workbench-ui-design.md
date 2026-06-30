@@ -346,7 +346,7 @@ Data comes directly from the `failureContext` field in the Layer 9 response.
 
 ## View 3: Accountability
 
-Three sub-views via tabs.
+Four sub-views via tabs.
 
 ### Audit Trail
 Ledger entry chain for a selected case in causal order. Table columns: entry type, actor, role, timestamp, `causedByEntryId`, digest. The `causedByEntryId` links are the differentiator — click any entry to see what caused it, trace backwards to the original CASE_OPENED event.
@@ -393,6 +393,8 @@ Erasure status for actors and entities. Table showing completed erasures: actor/
 - "Erase Entity" — `POST /api/entities/{entityId}/erasure`
 
 Both endpoints already exist.
+
+**Data source:** The completed erasures table queries ledger entries of type `ENTITY_ERASURE` and `ACTOR_ERASURE` for actors/entities involved in the selected case. `AmlEntityErasureLedgerEntry` carries `erasedEntityId`, `erasureReason`, `memoriesErased`; `AmlActorErasureLedgerEntry` carries equivalent actor fields. Both are persisted with the actor/entity ID as `subjectId`, not the case ID — so the query path is: resolve the case's actors and entities from the case detail data, then query `GET /api/ledger/entries?subjectId={actorOrEntityId}&entryType=ENTITY_ERASURE,ACTOR_ERASURE` for each. This reuses the foundation ledger query endpoint (already specified in §New API Endpoints Summary) with an additional `entryType` filter parameter.
 
 ---
 
