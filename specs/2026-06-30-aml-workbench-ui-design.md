@@ -2,6 +2,7 @@
 
 **Date:** 2026-06-30
 **Status:** Draft
+**Issue:** To be filed in casehub-aml
 **Scope:** Production AML investigation workbench built on casehub-pages
 
 ---
@@ -164,6 +165,8 @@ dataset("investigations", {
 
 **Approach:** Build a denormalised `InvestigationSummaryView` populated on case open. When `AmlEngineCoordinator.startInvestigation()` fires, a new `AmlInvestigationSummaryService` persists a summary row (caseId, transaction fields, status=IN_PROGRESS, createdAt) to a dedicated table. Status updates via a `CaseLifecycleEvent` observer. The list endpoint reads this table with filter/sort/pagination — no cross-join between engine state and ledger required.
 
+**outcomeType population:** `CaseLifecycleEvent` carries `caseStatus` but NOT outcome information. When the observer receives a `COMPLETED` status transition, it calls `AmlInvestigationOutcomeService.resolveOutcome(caseId)` to resolve the `InvestigationOutcome` from `AmlSarOfficerReviewedLedgerEntry` records, then writes `outcome.type()` to the summary row's `outcomeType` column. For non-COMPLETED terminal states (FAILED, CANCELLED), `outcomeType` remains null — these cases have no outcome, only a `FailureContext`.
+
 This is the correct approach because it avoids runtime joins across persistence units (engine on default PU, ledger on qhorus PU), keeps the read path fast, and follows the CQRS-lite pattern already established in the architecture.
 
 **Response schema:**
@@ -211,7 +214,23 @@ Panel showing the `SuspiciousTransaction` that triggered the investigation. Fiel
 #### 2. Prior Context
 What the system knew about these entities before the investigation started. Shows AmlPriorContext data: entity risk history, network relationships, pattern history. Highlights `isKnownHighRisk` if applicable — this explains why senior-analyst routing was triggered.
 
-**New API Required:** `GET /api/investigations/{caseId}/prior-context` — expose the AmlPriorContext that was used at investigation start. Currently this is internal to the coordinator; needs to be captured and queryable.
+**New API Required:** `GET /api/investigations/{caseId}/prior-context` — expose the AmlPriorContext that was used at investigation start.
+
+**Backend design:** `AmlEngineCoordinator.startInvestigation()` already injects the prior context into the engine's `CaseContext` under key `"priorEntityContext"` via `AmlPriorContext.toContextMap()`. Retrieval: `CaseHubRuntime.query(caseId, "priorEntityContext")` returns the structured map containing `hasHistory` (boolean), `knownHighRisk` (boolean), `entityRiskCount`, `networkCount`, `patternCount`, and `facts[]` (each with `domain`, `text`, `createdAt`, `confidence`). The endpoint returns this map directly — no reconstruction needed since `toContextMap()` already serialises to a well-structured JSON-compatible shape.
+
+**Response schema:**
+```json
+{
+  "hasHistory": true,
+  "knownHighRisk": true,
+  "entityRiskCount": 3,
+  "networkCount": 1,
+  "patternCount": 2,
+  "facts": [
+    { "domain": "ENTITY_RISK", "text": "Prior SAR filed — entity linked to PEP network", "createdAt": "2026-05-15T10:00:00Z", "confidence": "0.9" }
+  ]
+}
+```
 
 #### 3. Investigation Flow (custom iframe component)
 Visual directed graph of the adaptive investigation path. Nodes represent specialist stages (entity-resolution → pattern-analysis + osint-screening → sar-drafting → compliance-review). Each node shows:
@@ -227,13 +246,13 @@ Parallel stages shown as parallel branches. Adaptive routing decisions highlight
 
 **New API Required:** `GET /api/investigations/{caseId}/flow` — the investigation path with routing decisions, specialist outcomes, and trust scores in a structure suitable for graph rendering. The Layer 6 response has `routingDecisions` but not the full flow topology.
 
-**Backend design:** This data must be reconstructed from the engine's `EventLog`. `CaseHubRuntime.eventLog(caseId)` returns `List<CaseEventLogRecord>` — filter for `WORKER_SCHEDULED` (carries `workerName` in metadata) and `WORKER_EXECUTION_COMPLETED` (carries `contextChanges`). Reconstruct the DAG:
+**Backend design:** This data must be reconstructed from the engine's `EventLog`. `CaseHubRuntime.eventLog(caseId)` returns `List<CaseEventLogRecord>`. `EventLog` has a monotonic `seq` field (Long) providing causal ordering independent of wall-clock timestamps. Reconstruct the DAG:
 1. Query `EventLog` entries for the caseId via `CaseHubRuntime.eventLog(caseId, Set.of(WORKER_SCHEDULED, WORKER_EXECUTION_COMPLETED, WORKER_EXECUTION_FAILED))`
-2. Build a node per `WORKER_SCHEDULED` event (ordered by timestamp)
-3. Detect parallel stages from overlapping timestamp windows
+2. Build a node per `WORKER_SCHEDULED` event, ordered by `seq`
+3. **Parallel detection via `seq` ordering:** two `WORKER_SCHEDULED` events dispatched in the same binding evaluation cycle will have consecutive `seq` values with no intervening `WORKER_EXECUTION_COMPLETED` event between them. Group consecutive `WORKER_SCHEDULED` events (in `seq` order) that are not separated by a `WORKER_EXECUTION_COMPLETED` — these are parallel. This uses the engine's causal ordering, not wall-clock timestamp proximity.
 4. Join with `AmlTrustRoutingAttestation` for trust scores at routing time (already persisted per capability)
 5. Specialist outcomes come from `CaseContext` — query via `CaseHubRuntime.query(caseId, path)` for each specialist key
-6. Return a graph structure: `{ nodes: [...], edges: [...] }` where edges represent execution order
+6. Return a graph structure: `{ nodes: [...], edges: [...] }` where edges represent execution order and parallel groups are marked
 
 #### 4. Specialist Findings
 Expandable panels for each specialist result:
@@ -245,6 +264,24 @@ Expandable panels for each specialist result:
 Each panel shows the `SpecialistOutcome` variant — Completed with full results, or Declined/Failed with agent ID, capability, and reason.
 
 **New API Required:** `GET /api/investigations/{caseId}/findings` — structured specialist outcomes. Currently embedded in `InvestigationSummary` but only available through the Layer 1 synchronous endpoint, not the Layer 9 async path.
+
+**Backend design:** Specialist results are stored in `CaseContext` as individual entries, written by worker functions in `AmlInvestigationCaseDescriptor`. Each worker writes its result map under the capability key. Retrieval uses multiple `CaseHubRuntime.query()` calls:
+1. `query(caseId, "entityResolution")` → `EntityResolutionResult` fields: `entityId`, `ownershipChain`, `entityType`, `riskScore`
+2. `query(caseId, "patternAnalysis")` → `PatternAnalysisResult` fields: `structuringDetected`, `description`
+3. `query(caseId, "osintScreening")` → `OsintResult` fields: `sanctionsHit`, `pepHit`, `detail` (plus `declined`, `reason` if the worker declined)
+4. `query(caseId, "sarDraft")` → SAR narrative text
+
+Each result is wrapped in the `SpecialistOutcome<T>` sealed hierarchy — `Completed(result)`, `Declined(agentId, capability, reason)`, or `Failed(agentId, capability, reason)`. The endpoint assembles all four into a single response. A null query result means the specialist hasn't executed yet (investigation still in progress).
+
+**Response schema:**
+```json
+{
+  "entityResolution": { "status": "COMPLETED", "result": { "entityId": "...", "ownershipChain": "...", "entityType": "PEP", "riskScore": 0.87 } },
+  "patternAnalysis": { "status": "COMPLETED", "result": { "structuringDetected": false, "description": "..." } },
+  "osintScreening": { "status": "DECLINED", "agentId": "osint-screening-agent", "capability": "osint-screening", "reason": "insufficient clearance" },
+  "sarDraft": { "status": "COMPLETED", "result": { "narrative": "..." } }
+}
+```
 
 #### 5. Oversight Gates
 Table of gated actions for this investigation:
@@ -423,7 +460,7 @@ Pre-built investigation datasets covering the key narratives:
 
 `POST /api/simulation/seed/{scenario}` — load a single scenario.
 
-`DELETE /api/simulation/seed` — clear all seeded data (reset for clean demo).
+`DELETE /api/simulation/seed` — full data reset: truncates `InvestigationSummaryView`, engine `CaseInstance` records, `AmlTrustRoutingAttestation` entries, `CaseMemoryStore` entries, related `WorkItem` records, and ledger entries for seeded cases. This intentionally breaks Merkle chain integrity for the deleted entries — acceptable because simulation mode is mutually exclusive with production (see below).
 
 ### Live Simulation
 
@@ -446,6 +483,8 @@ A configuration toggle (`casehub.aml.simulation.enabled=true`) that:
 The scenario template name is passed as part of the `SuspiciousTransaction` context (e.g., `flagReason: "PEP"` drives the PEP scenario path). The engine's binding evaluation then fires the correct adaptive path (PEP → senior-analyst-required, STRUCTURING → parallel pattern analysis). No interceptor or special extension point is needed — the existing stubs in `EntityResolutionBehaviour`, `PatternAnalysisBehaviour`, and `OsintScreeningBehaviour` already produce scenario-appropriate deterministic results because they read context from the `SuspiciousTransaction` and return structured `SpecialistOutcome` values.
 
 The full Layer 9 pipeline runs (engine case, binding evaluation, parallel dispatch, gate WorkItems, ledger entries, trust attestations) — only the specialist execution is deterministic, not the orchestration.
+
+**Production safety:** Simulation mode is mutually exclusive with production deployment. `@IfBuildProperty("casehub.aml.simulation.enabled", stringValue = "true")` is a build-time property — simulation endpoints do not exist in production builds. `DELETE /api/simulation/seed` performs a full data reset including ledger entries, which breaks Merkle chain integrity. This is acceptable because simulation runs against a dev/demo database, never production. The Quarkus dev profile uses `quarkus.datasource.devservices` (Testcontainers) by default, providing an isolated database per run.
 
 ---
 
@@ -540,6 +579,8 @@ Either approach works. The composite endpoint is less elegant (one fat response 
 
 ## Role Model
 
+### Gated compliance actions
+
 Three candidate groups govern access to gated actions, derived from `AmlGroups` and the `candidateGroups` on each `AmlActionType`:
 
 | Group | Role | Permitted Actions |
@@ -550,9 +591,21 @@ Three candidate groups govern access to gated actions, derived from `AmlGroups` 
 
 **Work queue filtering:** The work queue filters by `candidateGroups` — a user in `aml-compliance` sees only gate WorkItems for actions assigned to that group. The MLRO sees only SAR filing gates.
 
-**UI enforcement:** Role-based UI filtering (hiding views, disabling buttons) is deferred to the auth implementation. The spec's `withAccess()` reference in "What This Spec Does Not Cover" is the casehub-pages mechanism for this. For now, the workbench shows all views to all users — gate actions are protected at the API level by WorkItem candidateGroup matching, not by UI visibility.
+### Non-gated consequential actions
 
-**Intervention actions:** Suspend/resume/escalate in the Operations view are operational controls, not gated compliance actions. Access control for these is separate from the `AmlActionType` gate model and will be defined with the auth implementation.
+These actions fall outside the `AmlActionType` gate model but are consequential and require access control:
+
+| Action | Required Group | Rationale |
+|--------|---------------|-----------|
+| GDPR erasure (actor/entity) | `aml-senior-compliance` | Irreversible, compliance-consequential — erases memories and pseudonymises ledger entries. Requires senior sign-off. |
+| Suspend investigation | `aml-compliance` or `aml-mlro` | Operational control — any compliance officer can pause an investigation for review. |
+| Resume investigation | `aml-compliance` or `aml-mlro` | Same as suspend — resuming is equally consequential. |
+| Escalate work item | `aml-compliance` or `aml-mlro` | Operational control — escalation changes SLA and routing. |
+| Simulation seed/investigate | N/A (build-time gated) | Simulation endpoints only exist in simulation builds (`@IfBuildProperty`). No role-based access needed — the endpoints are absent in production. |
+
+### UI enforcement
+
+Role-based UI filtering (hiding views, disabling buttons) is deferred to the auth implementation. The spec's `withAccess()` reference in "What This Spec Does Not Cover" is the casehub-pages mechanism for this. For now, the workbench shows all views to all users — gate actions are protected at the API level by WorkItem candidateGroup matching, not by UI visibility. Non-gated consequential actions will be protected at the REST endpoint level using the group mappings above.
 
 ---
 
