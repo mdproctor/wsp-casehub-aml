@@ -79,7 +79,7 @@ The compliance officer / MLRO inbox. What needs human action right now.
 ```typescript
 dataset("work-queue", {
   url: "/api/work-items",
-  query: { status: "OPEN", category: "aml-compliance" },
+  query: { status: "OPEN", scope: "casehubio/aml/oversight" },
   refreshTime: "30second",
   columns: [
     { id: "id", type: "LABEL" },
@@ -100,7 +100,7 @@ dataset("work-queue", {
 - Total open items
 - Approaching SLA (< 7 days to `claimDeadline`)
 - Overdue (past `claimDeadline`)
-- By group breakdown (compliance-officers / aml-mlro / aml-senior-compliance)
+- By group breakdown (compliance-officers / aml-compliance / aml-mlro / aml-senior-compliance)
 
 **Filterable table:**
 - Sortable by priority, deadline, creation date
@@ -108,7 +108,11 @@ dataset("work-queue", {
 - Filterable by candidate group and priority
 
 **Click-through:**
-- Clicking a row navigates to the Investigations view with the linked caseId extracted from `callerRef` (which encodes `aml:investigation:{caseId}`). Implementation: custom JavaScript click handler parses the callerRef string, extracts the caseId via regex (`/aml:investigation:(.+)/`), and triggers sidebar navigation to the Investigations view with the caseId as a URL parameter. This is application-level code in the workbench, not a casehub-pages built-in — pages provides tree navigation and the `ComponentApi` event system, but cross-view drill-down with parameter extraction is workbench-specific logic.
+- Clicking a row navigates to the Investigations view with the linked caseId extracted from `callerRef`. Two callerRef formats exist in the work queue:
+  - Compliance review WorkItems: `aml:investigation:{caseId}` (from `ComplianceReviewLifecycle.openReview()`)
+  - Gate approval WorkItems: `case:{caseId}/gate:{gateId}` (from `GateCallerRef.encode()`)
+  
+  Implementation: custom JavaScript click handler parses the callerRef string, trying both patterns in order: first `case:(.+)/gate:.+` (gate format), then `aml:investigation:(.+)` (compliance review format). Extracts the caseId and triggers sidebar navigation to the Investigations view with the caseId as a URL parameter. This is application-level code in the workbench, not a casehub-pages built-in — pages provides tree navigation and the `ComponentApi` event system, but cross-view drill-down with parameter extraction is workbench-specific logic.
 
 **Actions:**
 - Claim, approve, reject buttons — REST POST via form save adapter
@@ -116,7 +120,9 @@ dataset("work-queue", {
 
 ### New API Required
 
-`GET /api/work-items` — query endpoint for WorkItems filtered by status, category, candidate group. Currently AML creates WorkItems via casehub-work but does not expose a query surface. This is a foundation concern — the endpoint belongs in casehub-work or an AML adapter.
+`GET /api/work-items` — query endpoint for WorkItems filtered by status, scope, candidate group, and callerRef pattern. Currently AML creates WorkItems via casehub-work but does not expose a query surface. This is a foundation concern — the endpoint belongs in casehub-work or an AML adapter.
+
+**Filter design note:** The work queue must capture BOTH compliance review WorkItems (created by `ComplianceReviewLifecycle`, `category: "aml-compliance"`, `candidateGroups: "compliance-officers"`) AND gate approval WorkItems (created by `ActionGateWorkItemHandler`, no category, `scope: "casehubio/aml/oversight"`). Filtering by `scope` is the correct unifying filter — but requires `ComplianceReviewLifecycle.openReview()` to be updated to set `.scope("casehubio/aml/oversight")`. This is an AML code change (not a foundation change) tracked below.
 
 ### Shared Component Notes
 
@@ -605,17 +611,29 @@ Either approach works. The composite endpoint is less elegant (one fat response 
 
 ## Role Model
 
+The AML workbench has a two-tier group model reflecting two independently-designed systems:
+
+### SAR compliance review
+
+| Group | Role | WorkItem Source | Used For |
+|-------|------|----------------|----------|
+| `compliance-officers` | Compliance Officer (SAR review) | `ComplianceReviewLifecycle.openReview()` | Reviewing SAR narratives, approving/rejecting SAR filings |
+
+This group pre-dates the gate system. `ComplianceReviewLifecycle` creates WorkItems with `candidateGroups("compliance-officers")`, `category("aml-compliance")`, and `callerRef("aml:investigation:{caseId}")`.
+
 ### Gated compliance actions
 
-Three candidate groups govern access to gated actions, derived from `AmlGroups` and the `candidateGroups` on each `AmlActionType`:
+Three candidate groups govern access to gate approval WorkItems, derived from `AmlGroups` and the `candidateGroups` on each `AmlActionType`:
 
 | Group | Role | Permitted Actions |
 |-------|------|-------------------|
-| `aml-compliance` | Compliance Officer | ACCOUNT_RESTRICTION, TRANSACTION_BLOCKING, ENTITY_LINK_CREATION |
+| `aml-compliance` | Compliance Officer (gates) | ACCOUNT_RESTRICTION, TRANSACTION_BLOCKING, ENTITY_LINK_CREATION |
 | `aml-mlro` | Money Laundering Reporting Officer | SAR_FILING (exclusive — tightest gate in the system) |
 | `aml-senior-compliance` | Senior Compliance Director | LAW_ENFORCEMENT_REFERRAL |
 
-**Work queue filtering:** The work queue filters by `candidateGroups` — a user in `aml-compliance` sees only gate WorkItems for actions assigned to that group. The MLRO sees only SAR filing gates.
+Gate WorkItems are created by `ActionGateWorkItemHandler` with `scope("casehubio/aml/oversight")`, no category, and `callerRef("case:{caseId}/gate:{gateId}")`.
+
+**Work queue filtering:** The work queue uses `scope: "casehubio/aml/oversight"` as the unifying filter (not `category`). This requires `ComplianceReviewLifecycle.openReview()` to be updated to set `.scope("casehubio/aml/oversight")` — currently it sets only `category("aml-compliance")` and no scope. This is an AML code change tracked in §Deferred Concerns. Within the filtered results, users see WorkItems matching their `candidateGroups` membership.
 
 ### Non-gated consequential actions
 
@@ -648,6 +666,7 @@ Items explicitly out of scope for this spec, tracked as GitHub issues:
 | Ledger proof REST endpoint | To be filed in casehub-ledger | `GET /api/ledger/entries/{id}/proof` |
 | WorkItem escalate endpoint | To be filed in casehub-work | `POST /api/work-items/{id}/escalate` |
 | WorkItem complete endpoint | To be filed in casehub-work | `POST /api/work-items/{id}/complete` |
+| `ComplianceReviewLifecycle` scope update | To be filed in casehub-aml | Add `.scope("casehubio/aml/oversight")` to `openReview()` WorkItem creation — required for unified work queue filtering |
 | WebSocket/SSE real-time updates | To be filed in casehub-aml | Replace polling with push when scale demands it |
 | casehub-pages consumption model verification | To be filed in casehub-pages | Verify DSL API vs iframe embedding — see §Parameterised Dataset URLs |
 
