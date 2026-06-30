@@ -2,6 +2,7 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-06-30-mdp01-from-nine-layers-to-a-screen.md](2026-06-30-mdp01-from-nine-layers-to-a-screen.md) | 2026-06-30 | From nine layers to a screen — AML workbench design, adversarial review, 13 backend endpoints, three SNAPSHOT breaks |
 | [2026-06-29-mdp02-the-type-that-lies.md](2026-06-29-mdp02-the-type-that-lies.md) | 2026-06-29 | The type that lies and the key that doesn't match — failure context on terminal status, entity-level GDPR memory erasure |
 | [2026-06-29-mdp01-what-the-officer-decided.md](2026-06-29-mdp01-what-the-officer-decided.md) | 2026-06-29 | Lifecycle vs outcome — gate rejection surfacing, adversarial review catches data corruption masking and discarded decisions |
 | [2026-06-23-mdp01-four-rounds-two-workers.md](2026-06-23-mdp01-four-rounds-two-workers.md) | 2026-06-23 | Four review rounds to get a two-worker migration right — wrong test claims, missing scope, PlannedAction gap, SNAPSHOT corruption |

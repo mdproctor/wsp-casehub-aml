@@ -1,31 +1,39 @@
-# Handoff — #80/#79 closed (2026-06-29)
+# Handoff — #91 workbench backend complete (2026-06-30)
 
 ## What this project is
 
 *Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
-## This session (2026-06-29)
+## This session (2026-06-30)
 
-Closed #80 (failure context on terminal InvestigationStatus — FailureContext/FailureEvent domain types, resolveFailureContext() querying EventLog with multi-CASE_FAULTED disambiguation, Layer6/Layer9 REST responses) and #79 (entity-level GDPR memory erasure — AmlErasureResult→ActorErasureResult rename, AmlEntityErasureLedgerEntry + V2013 migration, AmlErasureService.eraseEntity() + CaseMemoryStore.eraseEntity() orchestration with tamper-evident receipt, POST /api/entities/{entityId}/erasure endpoint). Design review ran 10 rounds ($32.42), caught BIGINT→UUID migration type error, SUSPENDED-is-not-a-failure semantic correction, multi-CASE_FAULTED disambiguation need. Filed deferred issues #83 (ledger content erasure) and #84 (cross-tenant erasure). Garden: revised GE-20260427-cc77a7 (resolved — .workItem() now exists), new GE-20260629-670471 (engine double-write of CASE_FAULTED).
+Designed and built the AML workbench UI backend API (epic #91). Brainstormed 4-view workbench concept, wrote spec, ran adversarial design review (9 rounds, $32.69, 35 issues all resolved), decomposed into backend + frontend plans, executed all 11 backend tasks via subagent-driven development. 57 new tests (228→285), 17 commits. Fixed two engine SNAPSHOT breaks (Worker.capabilityName(), YamlCaseHub.augment()) and a qhorus persistence-memory CDI three-way ambiguity. Filed 7 deferred issues across 3 repos, closes #88. Garden: GE-20260630-69e447 (qhorus CDI), GE-20260630-4aa4f9 (YamlCaseHub.augment()), GE-20260630-989449 (Worker.capabilityNames()).
 
 ## Immediate next step
 
-No open branch. Pick next work from backlog — #81 (automated retention expiry) or #82 (GDPR Art.22 decision records) are natural follow-ons. #83 and #84 are deferred architectural concerns.
+Branch `issue-91-aml-workbench-ui` is open. Execute Plan 2 (frontend): `plans/2026-06-30-aml-workbench-frontend.md` — 6 tasks starting with Quinoa setup. Resume with `resume handover` then `/work`.
+
+## Cross-Module
+
+**Blocked by** (can't fully complete without):
+- `casehub-work` — WorkItem query API (`GET /api/work-items`) gates the work queue view · work#241 · M · Med
+- `casehub-ledger` — ledger entry query + Merkle proof endpoints gate the accountability view · ledger#162 · S · Low
 
 ## What's next
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
-| #81 | Automated retention expiry (ErasureReason.RETENTION_EXPIRED) | M | Med | |
-| #82 | GDPR Art.22 decision record compliance supplements | M | Med | |
-| #83 | Entity data erasure in tamper-evident ledger content | L | High | Architectural limitation — deferred from #79 |
-| #84 | Cross-tenant entity memory erasure | M | Med | Only when multi-tenancy activates |
-| #72 | Gate rejection routing — re-open or close on MLRO rejection | M | High | Blocked on #14 / Layer 10 |
-| #14 | Layer 10 — LLM supervisor mode | L | High | Blocked on engine#101 |
+| #91 | AML workbench frontend (Plan 2 — 6 tasks) | L | Med | Next session — Quinoa + 4 views + iframe component |
+| #86 | Auth/RBAC for workbench | M | Med | Deferred — `withAccess()` available |
+| #87 | Trust score historical trends | S | Med | Deferred — TrustScoreCache current-only |
+| #89 | WebSocket/SSE real-time updates | M | Med | Deferred — polling sufficient for now |
+| #81 | Automated retention expiry | M | Med | |
+| #82 | GDPR Art.22 decision records | M | Med | |
 
 ## References
 
-- Spec: `docs/specs/issue-80-failure-context-erasure/2026-06-29-failure-context-entity-erasure-design.md`
-- Blog: `blog/2026-06-29-mdp02-the-type-that-lies.md`
-- Design review: `~/adr/casehub-aml/failure-context-entity-erasure-20260629-200629/tracker.md`
-- Garden: GE-20260629-670471 (engine double-write of CASE_FAULTED), GE-20260427-cc77a7 (resolved)
+- Spec: `specs/2026-06-30-aml-workbench-ui-design.md`
+- Backend plan: `plans/2026-06-30-aml-workbench-backend-api.md`
+- Frontend plan: `plans/2026-06-30-aml-workbench-frontend.md`
+- Blog: `blog/2026-06-30-mdp01-from-nine-layers-to-a-screen.md`
+- Design review: `~/adr/casehub-aml/aml-workbench-ui-20260630-015904/tracker.md`
+- Progress ledger: `.superpowers/sdd/progress.md`
