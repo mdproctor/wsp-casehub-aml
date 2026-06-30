@@ -246,10 +246,10 @@ Parallel stages shown as parallel branches. Adaptive routing decisions highlight
 
 **New API Required:** `GET /api/investigations/{caseId}/flow` — the investigation path with routing decisions, specialist outcomes, and trust scores in a structure suitable for graph rendering. The Layer 6 response has `routingDecisions` but not the full flow topology.
 
-**Backend design:** This data must be reconstructed from the engine's `EventLog`. `CaseHubRuntime.eventLog(caseId)` returns `List<CaseEventLogRecord>`. `EventLog` has a monotonic `seq` field (Long) providing causal ordering independent of wall-clock timestamps. Reconstruct the DAG:
-1. Query `EventLog` entries for the caseId via `CaseHubRuntime.eventLog(caseId, Set.of(WORKER_SCHEDULED, WORKER_EXECUTION_COMPLETED, WORKER_EXECUTION_FAILED))`
-2. Build a node per `WORKER_SCHEDULED` event, ordered by `seq`
-3. **Parallel detection via `seq` ordering:** two `WORKER_SCHEDULED` events dispatched in the same binding evaluation cycle will have consecutive `seq` values with no intervening `WORKER_EXECUTION_COMPLETED` event between them. Group consecutive `WORKER_SCHEDULED` events (in `seq` order) that are not separated by a `WORKER_EXECUTION_COMPLETED` — these are parallel. This uses the engine's causal ordering, not wall-clock timestamp proximity.
+**Backend design:** This data must be reconstructed from the engine's event log. `CaseHubRuntime.eventLog(caseId)` returns `List<CaseEventLogRecord>` in insertion order (the internal `EventLog` entity has a monotonic `seq` field, but `CaseEventLogRecord` doesn't expose it — list position IS the causal ordering). Reconstruct the DAG:
+1. Query event log entries for the caseId via `CaseHubRuntime.eventLog(caseId, Set.of(WORKER_SCHEDULED, WORKER_EXECUTION_COMPLETED, WORKER_EXECUTION_FAILED))`
+2. Build a node per `WORKER_SCHEDULED` event, in list order
+3. **Parallel detection via list ordering:** two `WORKER_SCHEDULED` events dispatched in the same binding evaluation cycle appear consecutively in the list with no intervening `WORKER_EXECUTION_COMPLETED` event between them. Group consecutive `WORKER_SCHEDULED` events (in list order) that are not separated by a `WORKER_EXECUTION_COMPLETED` — these are parallel. This uses the engine's causal insertion ordering, not wall-clock timestamp proximity.
 4. Join with `AmlTrustRoutingAttestation` for trust scores at routing time (already persisted per capability)
 5. Specialist outcomes come from `CaseContext` — query via `CaseHubRuntime.query(caseId, path)` for each specialist key
 6. Return a graph structure: `{ nodes: [...], edges: [...] }` where edges represent execution order and parallel groups are marked
@@ -291,7 +291,33 @@ Table of gated actions for this investigation:
 - Approver identity and timestamp
 - Candidate group
 
-**New API Required:** `GET /api/investigations/{caseId}/gates` — gate decisions for a case. Currently internal to the oversight coordinator.
+**New API Required:** `GET /api/investigations/{caseId}/gates` — gate decisions for a case.
+
+**Backend design:** Gate data already exists on gate WorkItems — no new persistence or enrichment needed. `ActionGateWorkItemHandler.buildPayload()` stores `actionType` (from `PlannedAction.actionType()`, e.g., `"sar.filing"`), `reversible`, `description`, and `context` (parameters) in the WorkItem's JSON payload. `candidateGroups` is stored on the WorkItem itself (as a CSV string). The endpoint:
+1. Query WorkItems by callerRef pattern matching `case:{caseId}/gate:*` (requires the `GET /api/work-items` query endpoint with callerRef filter support)
+2. From each WorkItem: `status`, `candidateGroups`, `title` (reason string), `claimedBy` (approver identity), `completedAt` (approval timestamp), `expiresAt`
+3. From WorkItem payload JSON: parse `actionType`, `reversible`, `description`
+4. Derive `gatePolicy` at query time via `AmlActionType.fromActionType(actionType).map(AmlActionType::gatePolicy)` — this is the only field not directly stored, but it's deterministically derivable from the action type string
+
+**Response schema:**
+```json
+{
+  "gates": [
+    {
+      "workItemId": "uuid",
+      "actionType": "sar.filing",
+      "gatePolicy": "ALWAYS",
+      "reversible": false,
+      "description": "SAR submission to regulator — MLRO sign-off required",
+      "candidateGroups": ["aml-mlro"],
+      "status": "COMPLETED",
+      "approvedBy": "officer-id",
+      "approvedAt": "2026-06-30T12:00:00Z",
+      "expiresAt": null
+    }
+  ]
+}
+```
 
 #### 6. Compliance Review
 The WorkItem for this investigation:
