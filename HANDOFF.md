@@ -1,39 +1,34 @@
-# Handoff — #91 workbench backend complete (2026-06-30)
+# Handoff — #91 frontend done, #92 CBR epic filed (2026-07-05)
 
 ## What this project is
 
 *Unchanged — `git show HEAD~1:HANDOFF.md` §What this project is*
 
-## This session (2026-06-30)
+## This session (2026-06-30 → 2026-07-05)
 
-Designed and built the AML workbench UI backend API (epic #91). Brainstormed 4-view workbench concept, wrote spec, ran adversarial design review (9 rounds, $32.69, 35 issues all resolved), decomposed into backend + frontend plans, executed all 11 backend tasks via subagent-driven development. 57 new tests (228→285), 17 commits. Fixed two engine SNAPSHOT breaks (Worker.capabilityName(), YamlCaseHub.augment()) and a qhorus persistence-memory CDI three-way ambiguity. Filed 7 deferred issues across 3 repos, closes #88. Garden: GE-20260630-69e447 (qhorus CDI), GE-20260630-4aa4f9 (YamlCaseHub.augment()), GE-20260630-989449 (Worker.capabilityNames()).
+Built the full AML workbench frontend (Tasks 12–17 of #91): Quinoa setup with casehub-pages DSL, four sidebar views (work queue, investigations, accountability, operations), investigation flow iframe component with directed graph rendering. All datasets use inline mock data — real API binding is a one-line swap per dataset when foundation endpoints ship. Fixed three runtime issues: placeholder `_` URLs causing fetch failures, nested JSON metrics responses incompatible with pages-data tabular extraction, and Quinoa dev-mode serving from `target/quinoa/build/` not `dist/`. Branch `issue-91-aml-workbench-ui` pushed to origin (28 commits, not yet merged to main). Filed CBR epic #92 with 7 child issues (#93–#99).
 
 ## Immediate next step
 
-Branch `issue-91-aml-workbench-ui` is open. Execute Plan 2 (frontend): `plans/2026-06-30-aml-workbench-frontend.md` — 6 tasks starting with Quinoa setup. Resume with `resume handover` then `/work`.
+Run `/work` → resume `issue-91-aml-workbench-ui` → run `/work end` to merge to main (squash the 28 commits). Or pick new work from backlog.
 
-## Cross-Module
+## What's left
 
-**Blocked by** (can't fully complete without):
-- `casehub-work` — WorkItem query API (`GET /api/work-items`) gates the work queue view · work#241 · M · Med
-- `casehub-ledger` — ledger entry query + Merkle proof endpoints gate the accountability view · ledger#162 · S · Low
+- #91 branch needs `/work end` to merge — 28 commits on origin, not on main · XS · Low
 
 ## What's next
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
-| #91 | AML workbench frontend (Plan 2 — 6 tasks) | L | Med | Next session — Quinoa + 4 views + iframe component |
-| #86 | Auth/RBAC for workbench | M | Med | Deferred — `withAccess()` available |
-| #87 | Trust score historical trends | S | Med | Deferred — TrustScoreCache current-only |
-| #89 | WebSocket/SSE real-time updates | M | Med | Deferred — polling sufficient for now |
-| #81 | Automated retention expiry | M | Med | |
-| #82 | GDPR Art.22 decision records | M | Med | |
+| #92 | CBR epic — case-based reasoning for AML investigation | XL | High | Start with #93 (similarity model) |
+| #81 | Automated retention expiry (ErasureReason.RETENTION_EXPIRED) | M | Med | |
+| #82 | GDPR Art.22 decision record compliance supplements | M | Med | |
+| #83 | Entity data erasure in tamper-evident ledger content | L | High | Deferred architectural concern |
+| #84 | Cross-tenant entity memory erasure | M | Med | Only when multi-tenancy activates |
 
 ## References
 
+- Blog: `blog/2026-07-05-mdp01-the-screen-that-lies.md`
 - Spec: `specs/2026-06-30-aml-workbench-ui-design.md`
-- Backend plan: `plans/2026-06-30-aml-workbench-backend-api.md`
-- Frontend plan: `plans/2026-06-30-aml-workbench-frontend.md`
-- Blog: `blog/2026-06-30-mdp01-from-nine-layers-to-a-screen.md`
-- Design review: `~/adr/casehub-aml/aml-workbench-ui-20260630-015904/tracker.md`
-- Progress ledger: `.superpowers/sdd/progress.md`
+- Plans: `plans/2026-06-30-aml-workbench-frontend.md`
+- Garden: GE-20260705-385e87 (Quinoa dev-mode serving from target/)
