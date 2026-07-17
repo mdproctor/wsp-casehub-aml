@@ -1,4 +1,6 @@
-# Handoff — #102 showcase page in progress (2026-07-17)
+*Updated: #102 closed — removed from active work.*
+
+# Handoff — casehub-aml (2026-07-17)
 
 ## What this project is
 
