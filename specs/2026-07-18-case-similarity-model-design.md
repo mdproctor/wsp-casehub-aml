@@ -26,7 +26,7 @@ The neocortex guide (`neocortex/docs/cbr/guide-aml.md`) provides a reference sch
 | Entity | `entity_risk_tier` LOW/MED/HIGH/PEP | `entity_type` INDIVIDUAL/CORPORATE/SHELL_COMPANY/PEP | Different dimension: ownership classification drives investigation methodology (beneficial ownership chains vs source-of-wealth), not just risk level |
 | Jurisdiction | ISO 3166-1 alpha-2 | 3-tier risk enum HIGH/MED/LOW | Risk-level similarity — two FATF grey-list countries have similar investigation patterns regardless of specific country. Country-level granularity deferred to #95 filter criteria |
 | Amount | `amount_range` (text labels, categorical) | `transaction_amount` (numeric, GaussianDecay) | Smooth similarity decay across the continuous amount range. Guide's buckets suit triggering thresholds, not case-to-case similarity |
-| Prior history | `prior_sars_on_entity` numeric 0-100 | `prior_incident_count` numeric 0-100 | Same approach — guide's recommendation adopted. Field name reflects AML domain (entity-risk memories, not just SARs) |
+| Prior history | `prior_sars_on_entity` numeric 0-100 | `prior_incident_count` numeric 0-20 | Same numeric approach. Range tightened from guide's [0, 100] to [0, 20] — AML entity-risk counts cluster in 0-10; the wider range compresses this into non-discriminating normalized distances. Values above 20 still work (scorer doesn't clamp). Field name reflects AML domain (entity-risk memories, not just SARs) |
 | Network | Not present | `network_complexity` (new) | AML-specific dimension: counterparty graph size distinguishes single-entity structuring from network-based laundering |
 | Narrative | `investigation_narrative` text/semantic | Omitted (deferred) | Requires embedding infrastructure (`memory-cbr-embedding`). Tracked as deferred scope — see Not In Scope |
 
@@ -128,9 +128,9 @@ Raw transaction amount as a numeric field with Gaussian decay. The amount range 
 | MEDIUM ↔ LOW | 0.5 | Adjacent risk tiers |
 | HIGH ↔ LOW | 0.2 | Non-adjacent; significantly different risk assessment approaches |
 
-**`prior_incident_count`** (weight 0.10) — `FeatureField.numeric("prior_incident_count", 0, 100, new GaussianDecay(0.3))`:
+**`prior_incident_count`** (weight 0.10) — `FeatureField.numeric("prior_incident_count", 0, 20, new GaussianDecay(0.3))`:
 
-Count of entity-risk memories from `AmlPriorContext.entityRisk().size()`. Captures recidivism severity — an entity with 3 prior incidents is more similar to one with 5 than to one with 15. GaussianDecay with σ=0.3 provides smooth similarity gradient across the count range.
+Count of entity-risk memories from `AmlPriorContext.entityRisk().size()`. Captures recidivism severity — an entity with 3 prior incidents is more similar to one with 5 than to one with 15. Range [0, 20] concentrates discrimination where AML entity-risk counts cluster: 0 vs 5 incidents scores 0.707 similarity, 0 vs 10 scores 0.249. Values above 20 still produce valid (very low) similarity — `computeNormalizedDistance` does not clamp, so entities with 25 and 30 incidents score d=0.25, sim=0.707. GaussianDecay with σ=0.3 provides smooth similarity gradient.
 
 **`network_complexity`** (weight 0.10) — `CategoricalTable`:
 
