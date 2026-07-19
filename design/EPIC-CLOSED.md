@@ -1,5 +1,5 @@
-# Branch Closed: issue-100-upstream-snapshot-migration
+# Branch Closed: issue-94-case-profile-store
 
-**Date:** 2026-07-07
-**Issues:** 100
+**Date:** 2026-07-19
+**Issues:** 94
 **Status:** merged to main
