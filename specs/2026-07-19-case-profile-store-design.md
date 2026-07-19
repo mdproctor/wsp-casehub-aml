@@ -75,10 +75,10 @@ The observer retrieves enrichment data from the engine's `CaseContext` via `Case
 5. Build investigation path string from `PlanItemStore` (see §5)
 6. Build `FeatureVectorCbrCase`:
    - `problem` = flagged transaction description (transaction type, accounts, amount)
-   - `solution` = investigation path (e.g. `"entity-resolution → pattern-analysis → osint-screening → sar-drafting → compliance-review"`)
+   - `solution` = investigation path (e.g. `"entity-resolution → pattern-analysis → osint-screening → sar-drafting → compliance-review"`). If no plan items are COMPLETED or FAULTED (edge case: direct manual verdict without worker execution), uses `"(direct-verdict)"` — `FeatureVectorCbrCase` rejects blank solutions via `isBlank()` check
    - `outcome` = `SarVerdict.name()` (UPHELD / WITHDRAWN / FLAGGED)
    - `confidence` = `SarOutcome.investigationAccuracyScore()`
-   - `features` = `CaseProfile.toFeatures()` merged with `{"sar_narrative": FeatureValue.string(sarNarrative)}`
+   - `features` = `CaseProfile.toFeatures()`, merged with `{"sar_narrative": FeatureValue.string(sarNarrative)}` only if `sarNarrative` is non-null. When the sar-drafting worker was skipped or failed, the `sar_narrative` feature is omitted — `FeatureValue.string(null)` throws NPE (`StringVal` requires non-null), and embedding an empty string would produce a meaningless vector for semantic similarity. The schema field is present but the feature is sparse.
 7. Call `cbrCaseMemoryStore.store(cbrCase, AmlCbrSchema.CASE_TYPE, entityId.toString(), AmlMemoryDomains.CBR, tenantId, caseId.toString(), Path.root())`
 8. Write `AmlCaseProfileLedgerEntry` with `causedByEntryId` linking to the SAR officer review ledger entry (see §3)
 9. Both calls (steps 7–8) wrapped in independent try/catch — memory failures must not propagate (established AML convention)
@@ -158,7 +158,13 @@ String path = records.stream()
     .sorted(Comparator.comparing(PlanItemRecord::createdAt))
     .map(PlanItemRecord::bindingName)
     .collect(Collectors.joining(" → "));
+
+if (path.isBlank()) {
+    path = "(direct-verdict)";
+}
 ```
+
+**Empty path guard:** `FeatureVectorCbrCase` rejects blank solutions (`isBlank()` check in constructor). If no plan items are COMPLETED or FAULTED — e.g., a direct manual verdict recorded via `recordOutcome()` without worker execution — the sentinel `"(direct-verdict)"` is used. The case is still stored: it records that an investigation with these initial dimensions was resolved directly, which is a valid CBR data point for the Retrieve step.
 
 **Why not `isTerminal()`:** `TaskStatus.isTerminal()` returns `true` for COMPLETED, FAULTED, REJECTED, OBSOLETE, and CANCELLED. OBSOLETE (superseded by another plan item — e.g., race pattern losers) and CANCELLED (case cancelled before execution) represent work that was never attempted. Including them would pollute the investigation path with phantom steps, degrading CBR similarity quality — two investigations with identical actual steps would appear different if one had more cancelled/obsolete items. FAULTED is included because it represents work that was attempted (useful signal: "this investigation tried X but it failed, and still reached this outcome").
 
