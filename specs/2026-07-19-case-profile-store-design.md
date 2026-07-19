@@ -83,7 +83,7 @@ The observer retrieves enrichment data from the engine's `CaseContext` via `Case
 8. Write `AmlCaseProfileLedgerEntry` with `causedByEntryId` linking to the SAR officer review ledger entry (see §3)
 9. Both calls (steps 7–8) wrapped in independent try/catch — memory failures must not propagate (established AML convention)
 
-**Entity ID for the CBR store:** `UUID.nameUUIDFromBytes(("aml-cbr:" + caseId).getBytes(UTF_8)).toString()` — follows the AML ledger subject isolation convention (distinct from engine entries for the same case). Explicit `.toString()` conversion since `CbrCaseMemoryStore.store()` takes `String` parameters.
+**Entity ID for the CBR store:** `UUID.nameUUIDFromBytes(("aml-cbr:" + caseId).getBytes(UTF_8)).toString()` — namespaced to isolate CBR memory entries from engine entries for the same case in the memory store. Explicit `.toString()` conversion since `CbrCaseMemoryStore.store()` takes `String` parameters. Note: this is the CBR **memory store** entity ID, not the ledger entry `subjectId` — the ledger entry uses raw `caseId` to match the established convention (see §3).
 
 **Scope:** `Path.root()` — no hierarchical scoping needed for AML CBR cases. Consistent with the platform's `CbrCaseRetainObserver` convention.
 
@@ -119,7 +119,7 @@ No weight needed in `WEIGHTS` — text fields use vector similarity via the `vec
 
 **`domainContentBytes()`:** Pipe-delimited UTF-8 of all non-transient fields (per ledger SNAPSHOT `domainContentBytes()` enforcement).
 
-**`subjectId`:** `UUID.nameUUIDFromBytes(("aml-cbr:" + caseId).getBytes(UTF_8))` — same as the CBR store entity ID, maintaining the AML ledger subject isolation convention.
+**`subjectId`:** `caseId` (raw case UUID) — all AML investigation ledger entries share `subjectId = caseId` so that `findBySubjectId(caseId, tenancyId)` returns the complete audit trail for an investigation. This is the established convention documented in `AmlCaseOpenedLedgerEntry`: "subjectId on this entry equals the case UUID, shared with all other ledger entries for the same investigation." The CBR memory store entity ID (`UUID.nameUUIDFromBytes("aml-cbr:" + caseId)`) is a separate concern — it namespaces entries within the memory store, not the ledger.
 
 **`causedByEntryId`:** Links to the `AmlSarOfficerReviewedLedgerEntry` for this case, closing the evidence chain from officer review → CBR profile storage. Lookup: query `LedgerEntryRepository.findBySubjectId(caseId, tenancyId)`, filter for `AmlSarOfficerReviewedLedgerEntry`, take the most recent by `createdAt`. If no officer review entry exists (e.g., SAR outcome recorded without compliance review), `causedByEntryId` is `null`.
 
@@ -146,21 +146,23 @@ CREATE TABLE aml_case_profile_ledger_entry (
 
 ### 5. Investigation Path Extraction
 
-The observer injects `PlanItemStore` (engine-common SPI) to retrieve completed plan items by case ID. The investigation path is built from terminal plan items sorted by creation time, following the same pattern as the platform's `CbrCaseRetainObserver`:
+The observer injects `PlanItemStore` (engine-common SPI) to retrieve plan items by case ID. The investigation path is built from plan items that were actually executed (COMPLETED or FAULTED), sorted by creation time:
 
 ```java
 PlanItemStore planItemStore = ...;
 List<PlanItemRecord> records = planItemStore.findByCaseId(caseId, tenancyId);
 
 String path = records.stream()
-    .filter(r -> r.status().isTerminal())
+    .filter(r -> r.status() == TaskStatus.COMPLETED || r.status() == TaskStatus.FAULTED)
     .filter(r -> r.executorName() != null)
     .sorted(Comparator.comparing(PlanItemRecord::createdAt))
     .map(PlanItemRecord::bindingName)
     .collect(Collectors.joining(" → "));
 ```
 
-`PlanItemRecord` provides `bindingName()` (the case definition binding name, e.g. `"entity-resolution"`), `executorName()` (the actual worker that executed), `status()` (terminal check via `isTerminal()`), and `createdAt()` (creation timestamp for ordering).
+**Why not `isTerminal()`:** `TaskStatus.isTerminal()` returns `true` for COMPLETED, FAULTED, REJECTED, OBSOLETE, and CANCELLED. OBSOLETE (superseded by another plan item — e.g., race pattern losers) and CANCELLED (case cancelled before execution) represent work that was never attempted. Including them would pollute the investigation path with phantom steps, degrading CBR similarity quality — two investigations with identical actual steps would appear different if one had more cancelled/obsolete items. FAULTED is included because it represents work that was attempted (useful signal: "this investigation tried X but it failed, and still reached this outcome").
+
+`PlanItemRecord` provides `bindingName()` (the case definition binding name, e.g. `"entity-resolution"`), `executorName()` (the actual worker that executed), `status()`, and `createdAt()` (creation timestamp for ordering).
 
 ### 6. Enrichment Data Sources
 
@@ -201,7 +203,7 @@ The `CaseProfileExtractor.extractComplete()` method requires specialist worker o
 | Tenancy null-guard | Event with null `tenancyId` → falls back to `DEFAULT_TENANT_ID` |
 | Partial profile | Missing enrichment field (e.g., entity-resolution worker skipped) → `CaseProfile.initial()` used, CBR case still stored |
 
-Test conventions per CLAUDE.md: hash chain disabled, drain engine to completion before assertions, subject isolation via `UUID.nameUUIDFromBytes(("aml-cbr:" + caseId).getBytes(UTF_8))`.
+Test conventions per CLAUDE.md: hash chain disabled, drain engine to completion before assertions, ledger subject isolation via `caseId` (raw case UUID), CBR store entity isolation via `UUID.nameUUIDFromBytes(("aml-cbr:" + caseId).getBytes(UTF_8))`.
 
 ## Scope Boundary
 
