@@ -1,27 +1,26 @@
-# Handoff — CBR case similarity model complete (2026-07-18)
+# Handoff — case profile store complete (2026-07-19)
 
 ## What this project is
 
-CaseHub AML — anti-money laundering investigation application built on CaseHub platform. 9 foundation layers complete. Frontend migrated to Lit + blocks-ui. CBR domain model now wired to neocortex infrastructure.
+CaseHub AML — anti-money laundering investigation application built on CaseHub platform. 9 foundation layers complete. CBR case profile store (#94) now wired — completed investigations are stored in CbrCaseMemoryStore on SAR verdict with tamper-evident ledger audit.
 
-## This session (2026-07-18)
+## This session (2026-07-19)
 
-Closed #93 (case similarity model) — first CBR epic (#92) issue. Typed `FlagReason` enum replacing `String` on `SuspiciousTransaction` (migrated ~30 call sites). `CaseProfile` record with `initial()` (3 dims: flag reason, amount, prior incidents) and `complete()` (+ entity type, jurisdiction risk, network complexity) factories. `toFeatures()` bridges to neocortex `FeatureValue` for `CbrSimilarityScorer`. `AmlCbrSchema` with weighted `CategoricalTable` similarity specs (8 flag pattern pairs, 4 entity type pairs) and `GaussianDecay` for amount/incident numerics. Schema auto-registered at startup. Design spec went through adversarial review (13 findings, all verified, $13.23).
+Closed #94 (case profile store). `AmlCaseProfileStoreObserver` fires on `SarOutcomeRecordedEvent`, extracts `CaseProfile` dimensions + investigation path from engine context, stores via `CbrCaseMemoryStore`, writes `AmlCaseProfileLedgerEntry` (V3005). Schema gained `semanticText("sar_narrative")` for embedding-based retrieval. Adversarial design review caught 15 issues ($21.27) — most critical: `@ObservesAsync` would silently never fire (event uses `.fire()`), `CaseInstance.getCompletedPlanItems()` doesn't exist, `FeatureField.text()` creates non-semantic field. Code review caught `valueOf()` crash on malformed context values.
 
-Also fixed pre-existing Flyway V2002 collision with qhorus SNAPSHOT — renumbered AML engine-ledger to V3000+.
+Also fixed pre-existing SNAPSHOT dependency cache corruption (deleted all casehub JARs; rebuilt from source + GitHub Packages).
 
-**Commit on main:** `d9d5c0c` feat(#93): case similarity model — dimensions, profile, schema
+**Commit on main:** `0e8d85b` feat(#94): case profile store — CBR retain on SAR outcome
 
 ## Immediate next step
 
-Pick up #94 (case profile store — case-level indexing in CaseMemoryStore). The `CaseProfile.toFeatures()` and `AmlCbrSchema` are ready to wire into `CbrCaseMemoryStore.store()`.
+Pick up #95 (CBR Retrieve — similarity search against case base). The case base now has entries to search against.
 
 ## What's left (backlog)
 
 | # | Description | Scale | Complexity | Notes |
 |---|-------------|-------|------------|-------|
-| 94 | Case profile store — case-level indexing in CaseMemoryStore | M | Med | Unblocked by #93 |
-| 95 | CBR Retrieve — similarity search against case base | M | Med | Depends on #94 |
+| 95 | CBR Retrieve — similarity search against case base | M | Med | Unblocked by #94 |
 | 96 | CBR Reuse — investigation path adaptation | L | High | Depends on #95 |
 | 97 | CBR Retain — outcome indexing on case completion | M | Med | Can parallel with #96 |
 | 98 | SAR narrative seeding from similar past cases | M | Med | Depends on #95 |
@@ -38,6 +37,6 @@ Pick up #94 (case profile store — case-level indexing in CaseMemoryStore). The
 
 ## References
 
-- Spec: `docs/specs/2026-07-18-case-similarity-model-design.md` (in project repo, also posted on #93)
-- Blog: `blog/2026-07-17-mdp01-six-columns-that-matter.md`
-- Epic: #92 (CBR epic), #111 (showcase UX)
+- Spec: `docs/specs/2026-07-19-case-profile-store-design.md` (in project repo, also posted on #94)
+- Blog: `blog/2026-07-19-mdp01-teaching-the-case-base.md`
+- Epic: #92 (CBR epic)
