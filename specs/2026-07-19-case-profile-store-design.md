@@ -48,7 +48,6 @@ Rationale for this lifecycle point: the SAR verdict (UPHELD/WITHDRAWN/FLAGGED) i
 **Dependencies:**
 - `CbrCaseMemoryStore` — store the case
 - `LedgerEntryRepository` — write the tamper-evident entry
-- `CaseProfileExtractor` — extract the complete profile
 - `CaseInstanceCache` — retrieve case context for enrichment data
 - `PlanItemStore` — retrieve completed plan items for investigation path
 - `ObjectMapper` — deserialize `SuspiciousTransaction` from case context
@@ -70,8 +69,8 @@ The observer retrieves enrichment data from the engine's `CaseContext` via `Case
 **Flow:**
 1. Retrieve `CaseInstance` via `caseInstanceCache.get(caseId)` and read `CaseContext`
 2. Deserialize `SuspiciousTransaction` from `caseContext.get("transaction")`
-3. Read enrichment dimensions from context keys; if any enrichment field is unavailable (worker skipped or failed), extract a partial profile using `CaseProfile.initial()` with data from the transaction and prior context only
-4. Extract `CaseProfile` via `CaseProfileExtractor` (`extractComplete()` or `extractInitial()` depending on data availability)
+3. Read `entityRiskCount` from `caseContext.getPath("priorEntityContext.entityRiskCount")`
+4. Read enrichment dimensions from context keys. Build `CaseProfile` directly: if all three enrichment dimensions are available, call `CaseProfile.complete(tx.flagReason(), tx.amount(), entityRiskCount, entityType, jurisdiction, network)`; otherwise call `CaseProfile.initial(tx.flagReason(), tx.amount(), entityRiskCount)`. `CaseProfileExtractor` is not used — its methods require `AmlPriorContext` which is non-recoverable from the case context (see §6), and the observer already has the three values those methods extract (`flagReason`, `amount`, `entityRiskCount`)
 5. Build investigation path string from `PlanItemStore` (see §5)
 6. Build `FeatureVectorCbrCase`:
    - `problem` = flagged transaction description (transaction type, accounts, amount)
