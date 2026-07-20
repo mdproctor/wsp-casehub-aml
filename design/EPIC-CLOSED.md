@@ -1,5 +1,5 @@
-# Branch Closed: issue-100-upstream-snapshot-migration
+# Branch Closed: issue-95-cbr-retrieve
 
-**Date:** 2026-07-07
-**Issues:** 100
+**Date:** 2026-07-20
+**Issues:** 95
 **Status:** merged to main
