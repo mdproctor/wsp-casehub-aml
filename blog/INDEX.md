@@ -2,6 +2,7 @@
 
 | File | Date | Title |
 |------|------|-------|
+| [2026-07-20-mdp01-the-retrieve-that-wasnt.md](2026-07-20-mdp01-the-retrieve-that-wasnt.md) | 2026-07-20 | The Retrieve That Wasn't — CBR retrieve via engine CbrConfig, not an app-specific wrapper |
 | [2026-07-17-mdp01-six-columns-that-matter.md](2026-07-17-mdp01-six-columns-that-matter.md) | 2026-07-17 | Six columns that matter — column optimization, intervention metrics, column picker discovery |
 | [2026-07-05-mdp01-the-screen-that-lies.md](2026-07-05-mdp01-the-screen-that-lies.md) | 2026-07-05 | The screen that lies — casehub-pages branded types, data shape mismatch, Quinoa dev-mode gotchas, CBR epic filed |
 | [2026-06-30-mdp01-from-nine-layers-to-a-screen.md](2026-06-30-mdp01-from-nine-layers-to-a-screen.md) | 2026-06-30 | From nine layers to a screen — AML workbench design, adversarial review, 13 backend endpoints, three SNAPSHOT breaks |
