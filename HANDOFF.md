@@ -1,3 +1,5 @@
+*Updated: #43 closed — removed from Wave 3 backlog.*
+
 # Handoff — CI green, wave plan ready (2026-08-01)
 
 ## What this project is
@@ -45,7 +47,6 @@ Spin up Wave 1 slots: `work-slot create` for #113, #115, #81, #87 — all indepe
 | 114 | LLM sar-drafting narrative adaptation | CBR | M | Med |
 | 106 | Trust Score visualization | UI | M | Med |
 | 116 | Quality dashboard — UPHELD-rate segmentation | CBR | M | Med |
-| 43 | Layer 7 comparison table vs IBM AMLSim | Tutorial | M | Med |
 | 107 | Officer Review — work-item-detail integration | UI | M | Med |
 | 109 | Compliance nav — row selection | UI | M | Med |
 
