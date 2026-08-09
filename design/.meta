@@ -1,0 +1,10 @@
+branch: issue-90-verify-pages-dsl
+state: scaffolded
+project-sha: d7c51c6308438d88df3ff37c045148fc1127e47c
+date: 2026-08-10
+issue: 90
+issue-repo: casehubio/aml
+covers: 90,87,88,81
+flyway-next-v: none
+design-repo: workspace
+design-section-hashes: 4d2cc5ab:## §1 Introduction and Goals|4f6b26ef:## §2 Constraints|39b76cb9:## §3 Context and Scope|74aa736f:## §4 Solution Strategy|9ca8de62:## §5 Building Block View|f1938c56:## §6 Runtime View|65807a21:## §7 Deployment View|a03d508f:## §8 Crosscutting Concepts|b2e1b57c:## §9 Journeys and Chapters|598f3a04:## §10 Architectural Decisions|1f604475:## §11 Quality Requirements|af5f260f:## §12 Risks and Technical Debt|42d51385:## §13 Glossary|faa654d9:## Arc42Stories Self-Assessment
