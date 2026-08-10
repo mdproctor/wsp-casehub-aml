@@ -31,3 +31,4 @@
 | [2026-05-31-mdp02-closed-isnt-clean.md](2026-05-31-mdp02-closed-isnt-clean.md) | 2026-05-31 | Hygiene audit: closure stamps were clean, promotion wasn't — blog, plans, spec, protocol, and a remote-less branch all fixed |
 | [2026-06-01-mdp01-two-conflicts-one-spec.md](2026-06-01-mdp01-two-conflicts-one-spec.md) | 2026-06-01 | Two @DefaultBean CDI conflicts resolved, JAX-RS §4.2.4 exception mapper bypass discovered, build at 83/80 |
 | [2026-08-03-mdp01-three-agents-four-issues-one-merge.md](2026-08-03-mdp01-three-agents-four-issues-one-merge.md) | 2026-08-03 | Parallel agent dispatch for Wave 1 batch — what works, what breaks at merge, and why cross-repo renames are never S-scale |
+| [2026-08-10-mdp01-the-dsl-you-dont-use.md](2026-08-10-mdp01-the-dsl-you-dont-use.md) | 2026-08-10 | casehub-pages DSL builds static dataset scope — workbench correctly bypasses it; spec drift as a documentation failure mode |
