@@ -1,1 +1,1 @@
-# Design Journal — issue-90-verify-pages-dsl
+# Design Journal — issue-2-epic-gap-close

@@ -32,3 +32,4 @@
 | [2026-06-01-mdp01-two-conflicts-one-spec.md](2026-06-01-mdp01-two-conflicts-one-spec.md) | 2026-06-01 | Two @DefaultBean CDI conflicts resolved, JAX-RS §4.2.4 exception mapper bypass discovered, build at 83/80 |
 | [2026-08-03-mdp01-three-agents-four-issues-one-merge.md](2026-08-03-mdp01-three-agents-four-issues-one-merge.md) | 2026-08-03 | Parallel agent dispatch for Wave 1 batch — what works, what breaks at merge, and why cross-repo renames are never S-scale |
 | [2026-08-10-mdp01-the-dsl-you-dont-use.md](2026-08-10-mdp01-the-dsl-you-dont-use.md) | 2026-08-10 | casehub-pages DSL builds static dataset scope — workbench correctly bypasses it; spec drift as a documentation failure mode |
+| [2026-08-11-mdp02-closing-the-gaps.md](2026-08-11-mdp02-closing-the-gaps.md) | 2026-08-11 | Epic audit and gap-close: trust dimensions, compliance escalation, failure handling |
