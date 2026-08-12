@@ -1,0 +1,10 @@
+branch: issue-8-llm-supervisor-mode
+state: scaffolded
+project-sha: 45b8b3af149f3fbc362d639ead48a84952eb5bbe
+date: 2026-08-12
+issue: 8
+issue-repo: casehubio/aml
+covers: 8
+flyway-next-v: unknown
+design-repo: workspace
+design-section-hashes: 
