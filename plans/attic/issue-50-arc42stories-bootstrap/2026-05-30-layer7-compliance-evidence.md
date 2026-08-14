@@ -1550,24 +1550,21 @@ Replace the current Layer 7 stub section with:
 ```markdown
 ## Layer 7 — Compliance evidence (accountability properties mapped against FinCEN/FATF)
 
-**Participates in:** S5
-**Issue:** casehubio/aml#43
-**Navigation:** `git log --grep="#43" --oneline`
+**Participates in:** S5 **Issue:** casehubio/aml#43 **Navigation:** `git log --grep="#43" --oneline`
 **Spec:** workspace `specs/2026-05-30-layer7-compliance-evidence-design.md`
 **Completed:** 2026-05-30
 
 ### What it adds
 
 Structured evidence that each FinCEN/FATF accountability property is met, surfaced via
-`GET /api/investigations/{caseId}/compliance-evidence`. Evidence is requirement-scoped
-(not layer-scoped) and includes Merkle inclusion proofs per ledger event — independently
-verifiable without trusting the service.
+`GET /api/investigations/{caseId}/compliance-evidence`. Evidence is requirement-scoped (not layer-scoped) and includes
+Merkle inclusion proofs per ledger event — independently verifiable without trusting the service.
 
 Also wires GDPR erasure via `POST /api/actors/{actorId}/erasure` (`LedgerErasureService`)
 and captures trust scores at routing time (`AmlTrustRoutingAttestation`) before cache drift.
 
-**Prerequisite fix:** `writeComplianceReviewOpened` now derives `causedByEntryId` internally
-by querying for `CASE_OPENED` — works for both the synchronous Layer 3 and async Layer 5 paths.
+**Prerequisite fix:** `writeComplianceReviewOpened` now derives `causedByEntryId` internally by querying for
+`CASE_OPENED` — works for both the synchronous Layer 3 and async Layer 5 paths.
 
 ### Accountability properties delivered
 
@@ -1580,15 +1577,16 @@ by querying for `CASE_OPENED` — works for both the synchronous Layer 3 and asy
 
 ### Scope constraint
 
-`AuditChainRequirement` covers `AmlInvestigationLedgerEntry` records only (case lifecycle
-events). Specialist dispatch audit (COMMAND/DONE/DECLINE per agent) lives in the qhorus
-`MessageLedgerEntry` chain — same `subjectId` but a separate Merkle tree. Stated explicitly
-in the `mechanism` field so examiners have accurate expectations.
+`AuditChainRequirement` covers `AmlInvestigationLedgerEntry` records only (case lifecycle events). Specialist dispatch
+audit (COMMAND/DONE/DECLINE per agent) lives in the qhorus
+`MessageLedgerEntry` chain — same `subjectId` but a separate Merkle tree. Stated explicitly in the `mechanism` field so
+examiners have accurate expectations.
 
 ### Open items
 
-- casehubio/engine#403: add `trustScoreAtRouting` to `WorkerDecisionEntry` (makes `AmlTrustRoutingAttestation` redundant)
-- casehubio/work#241: public `WorkItem` read API (removes `em.find` workaround)
+- casehubio/engine#403: add `trustScoreAtRouting` to `WorkerDecisionEntry` (makes `AmlTrustRoutingAttestation`
+  redundant)
+- casehubio/work#241: public `WorkItemEntity` read API (removes `em.find` workaround)
 - casehubio/aml#44: observer failure reconciliation (silent evidence gaps under DB errors)
 - GDPR proper data-subject demo: add `AML_SAR_OFFICER_REVIEWED` event with human `actorId`
 
@@ -1599,28 +1597,30 @@ and must be added to `quarkus.arc.selected-alternatives` in test `application.pr
 alongside `JpaLedgerEntryRepository`. Without it, CDI fails to inject
 `LedgerMerkleFrontierRepository` into `LedgerVerificationService`.
 
-**Tokenisation enabled in tests.** `casehub.ledger.identity.tokenisation.enabled=true` is
-required in test `application.properties` for `LedgerErasureService.erase()` to create
+**Tokenisation enabled in tests.** `casehub.ledger.identity.tokenisation.enabled=true` is required in test
+`application.properties` for `LedgerErasureService.erase()` to create
 `ActorIdentity` rows and return `mappingFound = true`.
 
 **`WorkerDecisionEvent` observation.** `@Observes WorkerDecisionEvent` with
-`@Transactional(REQUIRES_NEW)` gives each attestation its own transaction, decoupled from
-the engine worker's transaction. Sequence number assignment uses `findLatestBySubjectId` which
-is not concurrent-safe under parallel worker dispatch (pattern-analysis + osint-screening fire
-simultaneously in Layer 5). Acceptable for tutorial; tracked as casehubio/aml#44.
+`@Transactional(REQUIRES_NEW)` gives each attestation its own transaction, decoupled from the engine worker's
+transaction. Sequence number assignment uses `findLatestBySubjectId` which is not concurrent-safe under parallel worker
+dispatch (pattern-analysis + osint-screening fire simultaneously in Layer 5). Acceptable for tutorial; tracked as
+casehubio/aml#44.
 
-**`WorkItem` lookup.** `em.find(WorkItem.class, taskId)` using the default `EntityManager` —
-`WorkItem` is on the default datasource. `WorkItemStore` is an internal class; no public query
-API exists in casehub-work-api (casehubio/work#241).
+**`WorkItemEntity` lookup.** `em.find(WorkItem.class, taskId)` using the default `EntityManager` —
+`WorkItemEntity` is on the default datasource. `WorkItemStore` is an internal class; no public query API exists in
+casehub-work-api (casehubio/work#241).
 
 ### Pattern to replicate (in another domain)
 
 1. Write `XxxComplianceEvidenceService` that assembles one record per regulatory requirement
-2. For each requirement with a Merkle-provable artifact: call `LedgerVerificationService.inclusionProof(entryId)` per entry, project to domain API types
+2. For each requirement with a Merkle-provable artifact: call `LedgerVerificationService.inclusionProof(entryId)` per
+   entry, project to domain API types
 3. For SLA: find the WorkItem task ID from the ledger entry, fetch via `em.find`
 4. For trust routing: observe `WorkerDecisionEvent`, write a domain ledger attestation capturing score at routing time
 5. Expose `GET /api/{domain}/compliance-evidence` and `POST /api/actors/{actorId}/erasure`
-6. In test `application.properties`: enable `JpaLedgerMerkleFrontierRepository` as selected alternative and `casehub.ledger.identity.tokenisation.enabled=true`
+6. In test `application.properties`: enable `JpaLedgerMerkleFrontierRepository` as selected alternative and
+   `casehub.ledger.identity.tokenisation.enabled=true`
 ```
 
 - [ ] **Step 9.2: Commit LAYER-LOG**
