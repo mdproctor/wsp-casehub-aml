@@ -35,32 +35,58 @@ PlanningStrategy.select(CasePlanModel, PlanExecutionContext, List<Binding>) → 
 ### Component Overview
 
 ```
-┌─────────────────────────────────────────────┐
-│           AmlInvestigationSupervisor        │
-│         implements PlanningStrategy         │
-│              id() = "aml-supervisor"        │
-├─────────────────────────────────────────────┤
-│  1. Invocation gate — should LLM be called? │
-│  2. Context projection — what does LLM see? │
-│  3. LLM call — ChatModel.chat(prompt)       │
-│  4. Response validation — binding names ok? │
-│  5. Audit — context field + ledger entry    │
-│  6. Fallback — degrade on any failure       │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│        AmlInvestigationSupervisor                    │
+│      implements PlanningStrategy (pure — no I/O)     │
+│           id() = "aml-supervisor"                    │
+├──────────────────────────────────────────────────────┤
+│  1. Delegate to AmlSupervisorLlmAdapter              │
+│  2. Validate response (binding names in eligible)    │
+│  3. Record decision in pending store (in-memory)     │
+│  4. Return selected bindings                         │
+│  5. On failure → return all eligible (fallback)      │
+└──────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│        AmlSupervisorLlmAdapter                       │
+│      (prompt building, LLM call, JSON parsing)       │
+├──────────────────────────────────────────────────────┤
+│  - buildPrompt(plan, context, eligible)              │
+│  - callLlm(prompt) → SupervisorDecision              │
+│  - extractJsonBlock(response)                        │
+└──────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│        AmlSupervisorAuditObserver                    │
+│      @ObservesAsync WorkerDecisionEvent              │
+├──────────────────────────────────────────────────────┤
+│  - Reads pending decisions from supervisor store     │
+│  - Writes AmlSupervisorDecisionLedgerEntry           │
+│  - Runs outside the planning cycle transaction       │
+└──────────────────────────────────────────────────────┘
 ```
 
-### YAML Configuration
+### YAML Configuration — Compound-Scoped Strategy
 
-`aml-investigation.yaml` gains the `planningStrategy` field:
+The supervisor is scoped to a YAML compound containing only the bindings where genuine decisions exist. Free-floating bindings (entity-resolution, cbr-path-advisor, failure-handling) remain under `ChoreographyStrategy`. This moves scope policy into the case definition (where domain policy lives) rather than burying it in Java gate logic.
 
 ```yaml
 spec:
-  planningStrategy: aml-supervisor
+  compounds:
+    - name: supervised-investigation
+      planningStrategy: aml-supervisor
+      members:
+        - pattern-analysis
+        - osint-screening
+        - investigation-triage
+        - sar-drafting
+        - senior-analyst-required-resolution
+
   capabilities:
     # ... unchanged
 ```
 
-When `planningStrategy` is absent or `"default"`, the `ChoreographyStrategy` applies (current behavior). Setting `"aml-supervisor"` activates the LLM supervisor for all investigations using this case definition.
+When a binding is inside the compound, `CompoundStrategyDispatcher` routes it to the `aml-supervisor` strategy. Bindings outside the compound (entity-resolution, cbr-path-advisor, compliance-review-opening, failure-handling) use the default `ChoreographyStrategy`. No Java invocation gate needed.
 
 ## Domain Model (app/)
 
@@ -77,12 +103,15 @@ public record SupervisorDecision(
         Objects.requireNonNull(selectedBindings);
         Objects.requireNonNull(suppressedBindings);
         Objects.requireNonNull(rationale);
-        if (selectedBindings.isEmpty() && !earlyTermination) {
+        if (selectedBindings.isEmpty()) {
             throw new IllegalArgumentException(
-                "Must select at least one binding unless earlyTermination is true");
+                "selectedBindings must not be empty — the LLM must always select at least one binding");
         }
     }
 }
+```
+
+`earlyTermination` is **audit metadata, not a control signal**. The LLM expresses early termination by selecting triage (or a subset of specialists) and suppressing others — the control is which bindings are selected. Returning empty would stall the case (no context change → same bindings eligible → hot loop). The `earlyTermination` flag records the LLM's intent for compliance audit.
 ```
 
 ### AmlSupervisorDecisionLedgerEntry
@@ -142,28 +171,26 @@ CREATE TABLE aml_supervisor_decision_ledger_entry (
 
 ## AmlInvestigationSupervisor — Implementation
 
-### Class Structure
+### Class Decomposition
+
+Three classes with distinct responsibilities:
+
+**`AmlInvestigationSupervisor`** — pure `PlanningStrategy`. No I/O, no side effects in `select()`. Delegates to the LLM adapter, validates the response, records the decision in a pending store, returns bindings.
 
 ```java
 @ApplicationScoped
 @io.quarkus.arc.Unremovable
 public class AmlInvestigationSupervisor implements PlanningStrategy {
 
-    private final ChatModelProvider chatModelProvider;
-    private final LedgerEntryRepository ledgerEntryRepository;
-    private final ObjectMapper objectMapper;
+    private final AmlSupervisorLlmAdapter llmAdapter;
+    private final AmlSupervisorPendingStore pendingStore;
 
     @Inject
     public AmlInvestigationSupervisor(
-            Instance<ChatModelProvider> chatModelProviders,
-            LedgerEntryRepository ledgerEntryRepository,
-            ObjectMapper objectMapper) {
-        this.chatModelProvider = chatModelProviders.stream()
-            .filter(p -> p.type() == ModelType.ANTHROPIC)
-            .findFirst()
-            .orElse(null);
-        this.ledgerEntryRepository = ledgerEntryRepository;
-        this.objectMapper = objectMapper;
+            AmlSupervisorLlmAdapter llmAdapter,
+            AmlSupervisorPendingStore pendingStore) {
+        this.llmAdapter = llmAdapter;
+        this.pendingStore = pendingStore;
     }
 
     @Override
@@ -174,31 +201,60 @@ public class AmlInvestigationSupervisor implements PlanningStrategy {
 }
 ```
 
-### Step 1 — Invocation Gate
-
-The LLM is consulted only at genuine decision points. The gate logic lives inside `select()`:
+**`AmlSupervisorLlmAdapter`** — owns prompt building, LLM call, JSON parsing. Injected into the strategy. Testable independently with mock `ChatModel`.
 
 ```java
-boolean shouldConsultLlm(List<Binding> eligible, PlanExecutionContext ctx) {
-    if (chatModelProvider == null) return false;
-    if (eligible.isEmpty()) return false;
-    if (hasTriageBinding(eligible)) return true;
-    if (eligible.size() >= 2) return true;
-    return false;
+@ApplicationScoped
+public class AmlSupervisorLlmAdapter {
+
+    private final ChatModelProvider chatModelProvider;
+    private final ObjectMapper objectMapper;
+
+    @Inject
+    public AmlSupervisorLlmAdapter(
+            Instance<ChatModelProvider> chatModelProviders,
+            ObjectMapper objectMapper) {
+        this.chatModelProvider = chatModelProviders.stream()
+            .filter(p -> p.type() == ModelType.ANTHROPIC)
+            .findFirst()
+            .orElse(null);
+        this.objectMapper = objectMapper;
+    }
+
+    public boolean isAvailable() { return chatModelProvider != null; }
+
+    public SupervisorDecision consult(
+            CasePlanModel plan, PlanExecutionContext ctx, List<Binding> eligible) {
+        String prompt = buildPrompt(plan, ctx, eligible);
+        return callLlm(prompt);
+    }
 }
 ```
 
-When the gate is not met, return `eligible` unchanged (pass-through, same as `ChoreographyStrategy`). No LLM call, no audit entry.
+**`AmlSupervisorPendingStore`** — `@ApplicationScoped` in-memory store for decisions pending ledger write. Thread-safe `ConcurrentHashMap<UUID, SupervisorDecision>` keyed by `caseId`.
 
-The gate fires when:
-- **Multiple bindings are eligible** — a genuine sequencing/prioritization choice
-- **Triage is among the eligible** — the decision point where early termination is most impactful (even as the only eligible binding — the LLM may judge that triage should wait for more evidence)
+**`AmlSupervisorAuditObserver`** — `@ObservesAsync WorkerDecisionEvent`. Reads pending decisions from the store and writes `AmlSupervisorDecisionLedgerEntry` entries. Runs outside the planning cycle transaction, avoiding the dual-datasource `@Transactional` anti-pattern.
 
-The gate does NOT fire when:
-- `chatModelProvider` is null (no LLM configured — permanent pass-through)
-- Only one non-triage binding is eligible (obvious choice, no decision to make)
+### SPI Contract — `select()` is Pure
 
-### Step 2 — Context Projection
+`select()` performs no I/O:
+1. Check if LLM adapter is available — if not, return `eligible` unchanged
+2. Call `llmAdapter.consult()` — this is the LLM call (blocking, acceptable with virtual threads)
+3. Validate response — reject hallucinated binding names
+4. Store decision in `pendingStore` (in-memory only)
+5. Return selected bindings
+
+On any failure in steps 2-3, fall back to returning `eligible` unchanged and store a degraded decision in the pending store.
+
+The only side effect is the in-memory pending store write, which is a `ConcurrentHashMap.put()` — no transaction, no I/O, no risk of re-entrant planning cycles.
+
+**Note on LLM call in `select()`:** The LLM call itself (step 2) is I/O, which makes `select()` not strictly pure. However, the `PlanningStrategy` SPI is synchronous and the call is essential to the strategy's function. The distinction is: the LLM call is the strategy's *computation* (deciding which bindings to select), not a *side effect* (writing state that affects other components). Audit and context writes — which ARE side effects — are deferred to the observer.
+
+### Scope via YAML Compound (replaces Java invocation gate)
+
+No Java gate logic. The compound definition in the YAML scopes the supervisor to exactly the bindings where decisions matter. `CompoundStrategyDispatcher` handles the routing — the supervisor's `select()` is only called with bindings from the `supervised-investigation` compound.
+
+### Context Projection
 
 The LLM receives a structured projection of the case context, not the raw JSON. This controls token usage and focuses the LLM on decision-relevant information.
 
@@ -296,78 +352,51 @@ List<Binding> validateAndResolve(SupervisorDecision decision, List<Binding> elig
 
 Any hallucinated binding name (not in the eligible set) triggers fallback (D5). This is the critical safety check — the LLM cannot add bindings that JQ conditions didn't authorize.
 
-### Step 5 — Audit
+### Audit — Deferred to Observer
 
-On every LLM-consulted cycle, write both:
+`select()` writes decisions to `AmlSupervisorPendingStore` (in-memory `ConcurrentHashMap`). `AmlSupervisorAuditObserver` flushes pending decisions to the ledger:
 
-**Context field** — for downstream worker visibility:
 ```java
-// Written via PlanExecutionContext — the supervisor returns bindings,
-// and the context field is written by a companion observer
-Map<String, Object> supervisorDecision = Map.of(
-    "selected", decision.selectedBindings(),
-    "suppressed", decision.suppressedBindings(),
-    "rationale", decision.rationale(),
-    "earlyTermination", decision.earlyTermination(),
-    "degraded", false
-);
-```
+@ApplicationScoped
+public class AmlSupervisorAuditObserver {
 
-**Ledger entry** — tamper-evident:
-```java
-var entry = new AmlSupervisorDecisionLedgerEntry();
-entry.selectedBindings = String.join(",", decision.selectedBindings());
-entry.suppressedBindings = String.join(",", decision.suppressedBindings());
-entry.rationale = decision.rationale();
-entry.earlyTermination = decision.earlyTermination();
-entry.eligibleCount = eligible.size();
-entry.degraded = false;
-entry.setSubjectId(UUID.nameUUIDFromBytes(
-    ("aml-supervisor:" + ctx.caseId()).getBytes(StandardCharsets.UTF_8)));
-entry.setTenancyId(ctx.tenancyId());
-entry.setActorId("aml-supervisor");
-entry.setActorType(ActorType.SYSTEM);
-ledgerEntryRepository.save(entry, ctx.tenancyId());
+    @Inject AmlSupervisorPendingStore pendingStore;
+    @Inject LedgerEntryRepository ledgerEntryRepository;
+
+    void onWorkerDecision(@ObservesAsync WorkerDecisionEvent event) {
+        UUID caseId = event.caseId();
+        SupervisorDecision decision = pendingStore.take(caseId);
+        if (decision == null) return;
+
+        var entry = new AmlSupervisorDecisionLedgerEntry();
+        entry.selectedBindings = String.join(",", decision.selectedBindings());
+        entry.suppressedBindings = String.join(",", decision.suppressedBindings());
+        entry.rationale = decision.rationale();
+        entry.earlyTermination = decision.earlyTermination();
+        entry.eligibleCount = decision.eligibleCount();
+        entry.degraded = decision.degraded();
+        entry.setSubjectId(UUID.nameUUIDFromBytes(
+            ("aml-supervisor:" + caseId).getBytes(StandardCharsets.UTF_8)));
+        entry.setTenancyId(event.tenancyId());
+        entry.setActorId("aml-supervisor");
+        entry.setActorType(ActorType.SYSTEM);
+        ledgerEntryRepository.save(entry, event.tenancyId());
+    }
+}
 ```
 
 Subject ID uses the `"aml-supervisor:" + caseId` pattern per the ledger subject isolation protocol.
 
-### Step 6 — Fallback
+This runs outside the planning cycle transaction — no dual-datasource risk. The observer follows the same pattern as `AmlTrustRoutingObserver` writing attestations on `WorkerDecisionEvent`.
 
-On any failure in steps 3-4 (LLM unavailable, timeout, unparseable response, hallucinated bindings):
+### Fallback
 
-```java
-List<Binding> degradedFallback(List<Binding> eligible, PlanExecutionContext ctx) {
-    // Write degradation marker to context
-    // (handled by writing to the context via the return value —
-    //  the supervisor cannot write context directly from select(),
-    //  so the degradation marker is written as a ledger entry only)
+On any failure in the LLM adapter (unavailable, timeout, unparseable response) or validation (hallucinated bindings):
 
-    var entry = new AmlSupervisorDecisionLedgerEntry();
-    entry.selectedBindings = eligible.stream()
-        .map(Binding::getName).collect(Collectors.joining(","));
-    entry.suppressedBindings = "";
-    entry.rationale = "LLM unavailable — degraded to choreography";
-    entry.earlyTermination = false;
-    entry.eligibleCount = eligible.size();
-    entry.degraded = true;
-    // ... save as above
+1. Record a degraded decision in the pending store (all eligible selected, `degraded: true`)
+2. Return `eligible` unchanged (fire all — ChoreographyStrategy behavior)
 
-    return eligible;  // fire all — ChoreographyStrategy behavior
-}
-```
-
-Degradation is **per-call, not sticky**. Each planning cycle independently attempts the LLM. If the LLM recovers mid-investigation, subsequent cycles use it. This avoids the complexity of degradation recovery logic while maximizing LLM utilization.
-
-### Context Writing Constraint
-
-`PlanningStrategy.select()` returns `List<Binding>` — it cannot write to the case context directly. The supervisor decision context field (`supervisorDecision`) must be written by a separate mechanism:
-
-**Option A:** An `@ObservesAsync` observer on a CDI event fired by the supervisor before returning from `select()`. The observer writes the context field asynchronously.
-
-**Option B:** A `BlackboardPlanConfigurer` that reads the ledger entry (written synchronously in `select()`) and projects it into the case context on the next planning cycle.
-
-**Choice: Option A.** The supervisor fires a `SupervisorDecisionEvent` CDI event; an observer writes the context field. This keeps the supervisor's contract clean (returns bindings) while ensuring downstream workers see the decision rationale. The CDI event is fired in both normal and degraded paths — the observer writes the appropriate context field (`supervisorDecision` or `supervisorDegraded: true`) based on the event payload.
+Degradation is **per-call, not sticky**. Each planning cycle independently attempts the LLM. If the LLM recovers mid-investigation, subsequent cycles use it.
 
 ### CBR Interaction
 
@@ -387,19 +416,24 @@ No special deconfliction logic is needed. The JQ conditions gate eligibility; th
 
 **`SupervisorDecisionTest`:**
 - Valid construction with selected and suppressed bindings
-- Empty selectedBindings with earlyTermination=true succeeds
-- Empty selectedBindings with earlyTermination=false throws
+- Empty selectedBindings always throws (earlyTermination is metadata, not a control signal)
 - Null fields throw
 
 **`AmlInvestigationSupervisorTest`:**
-- Gate: single eligible binding → pass-through, no LLM call
-- Gate: multiple eligible → LLM called
-- Gate: triage binding eligible as sole binding → LLM still called (early termination decision point)
-- Validate: hallucinated binding name → fallback
+- LLM adapter available → delegates and returns validated subset
+- Validate: hallucinated binding name → fallback (all eligible returned)
 - Validate: valid subset → correct bindings returned
-- Fallback: LLM exception → all eligible returned + degraded ledger entry
-- Fallback: null chatModelProvider → permanent pass-through
-- Context projection: correct fields included for each specialist finding state
+- Fallback: LLM adapter throws → all eligible returned + degraded decision in pending store
+- Fallback: LLM adapter unavailable → permanent pass-through, no pending store write
+- Pending store: decision recorded on successful LLM call
+- Pending store: degraded decision recorded on failure
+
+**`AmlSupervisorLlmAdapterTest`:**
+- Prompt contains case context projection, plan progress, eligible binding descriptions
+- Correct fields included for each specialist finding state (entity resolution present, pattern analysis absent, etc.)
+- JSON response parsed to SupervisorDecision
+- Malformed JSON throws
+- Missing JSON block in response throws
 
 **`AmlSupervisorDecisionLedgerEntryTest`:**
 - `domainContentBytes()` produces correct pipe-delimited output
@@ -409,18 +443,16 @@ No special deconfliction logic is needed. The JQ conditions gate eligibility; th
 
 **`SupervisorModeInvestigationTest`:**
 - Full investigation with mock `ChatModelProvider` returning structured decisions
-- Verify LLM is consulted at multi-binding decision points
-- Verify LLM is NOT consulted for single-binding cycles
+- Verify LLM is consulted only for compound-scoped bindings (not entity-resolution, cbr-path-advisor, failure-handling)
 - Verify fallback: mock ChatModelProvider.get() throws → investigation completes via choreography
-- Verify ledger entries: one `AmlSupervisorDecisionLedgerEntry` per LLM-consulted cycle
-- Verify early termination: LLM suppresses remaining specialists → triage fires with partial evidence → deterministic triage evaluates correctly with available findings
+- Verify ledger entries: `AmlSupervisorDecisionLedgerEntry` written by audit observer after worker dispatch
+- Verify early termination: LLM selects triage + suppresses remaining specialists → triage fires with partial evidence → deterministic triage evaluates correctly with available findings
 - Drain to `status=completed` per protocol PP-20260604-820c35
 
 **`SupervisorDegradedInvestigationTest`:**
 - Full investigation with always-failing ChatModelProvider
 - Verify all cycles degrade → investigation completes identically to non-supervisor mode
-- Verify degraded ledger entries written
-- Verify `supervisorDegraded` context marker present (via CDI observer)
+- Verify degraded ledger entries written by audit observer
 
 ## File Inventory
 
@@ -429,14 +461,16 @@ No special deconfliction logic is needed. The JQ conditions gate eligibility; th
 | File | Module | Description |
 |------|--------|-------------|
 | `SupervisorDecision.java` | app | Structured LLM output record |
-| `AmlInvestigationSupervisor.java` | app | `PlanningStrategy` implementation |
+| `AmlInvestigationSupervisor.java` | app | Pure `PlanningStrategy` — delegates, validates, returns |
+| `AmlSupervisorLlmAdapter.java` | app | Prompt building, LLM call, JSON parsing |
+| `AmlSupervisorPendingStore.java` | app | In-memory store for decisions pending ledger write |
+| `AmlSupervisorAuditObserver.java` | app | `@ObservesAsync WorkerDecisionEvent` — writes ledger entries |
 | `AmlSupervisorDecisionLedgerEntry.java` | app | Tamper-evident audit ledger entry |
-| `SupervisorDecisionEvent.java` | app | CDI event for context writing |
-| `SupervisorDecisionContextObserver.java` | app | Writes supervisor decision to case context |
 | `InvalidSupervisorResponseException.java` | app | Thrown on hallucinated binding names |
 | `V3012__supervisor_decision_ledger_entry.sql` | app (migration) | Join table for ledger subclass |
 | `SupervisorDecisionTest.java` | app (test) | Unit tests for record |
 | `AmlInvestigationSupervisorTest.java` | app (test) | Unit tests for strategy |
+| `AmlSupervisorLlmAdapterTest.java` | app (test) | Unit tests for prompt + parsing |
 | `AmlSupervisorDecisionLedgerEntryTest.java` | app (test) | Unit tests for ledger entry |
 | `SupervisorModeInvestigationTest.java` | app (test) | Integration test — LLM-guided investigation |
 | `SupervisorDegradedInvestigationTest.java` | app (test) | Integration test — degraded mode |
