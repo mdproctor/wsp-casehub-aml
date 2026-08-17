@@ -34,3 +34,4 @@
 | [2026-08-10-mdp01-the-dsl-you-dont-use.md](2026-08-10-mdp01-the-dsl-you-dont-use.md) | 2026-08-10 | casehub-pages DSL builds static dataset scope — workbench correctly bypasses it; spec drift as a documentation failure mode |
 | [2026-08-11-mdp02-closing-the-gaps.md](2026-08-11-mdp02-closing-the-gaps.md) | 2026-08-11 | Epic audit and gap-close: trust dimensions, compliance escalation, failure handling |
 | [2026-08-16-mdp38-provenance-that-travels.md](2026-08-16-mdp38-provenance-that-travels.md) | 2026-08-16 | W3C PROV-DM export for investigation lineage — mapping model, Awaitility budget-splitting fix, hidden outcome validation bug |
+| [2026-08-17-mdp01-schema-consolidation-art17-contingency.md](2026-08-17-mdp01-schema-consolidation-art17-contingency.md) | 2026-08-17 | Flyway migration consolidation (21→4), DDL audit finds, and ADR-0004 documenting the GDPR Art.17(3)(b) exemption for entity identifiers in the Merkle chain |
