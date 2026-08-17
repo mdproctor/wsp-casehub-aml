@@ -494,7 +494,7 @@ Pre-built investigation datasets covering the key narratives:
 
 `POST /api/simulation/seed/{scenario}` — load a single scenario.
 
-`DELETE /api/simulation/seed` — full data reset: truncates `InvestigationSummaryView`, engine `CaseInstance` records, `AmlTrustRoutingAttestation` entries, `CaseMemoryStore` entries, related `WorkItem` records, and ledger entries for seeded cases. This intentionally breaks Merkle chain integrity for the deleted entries — acceptable because simulation mode is mutually exclusive with production (see below).
+`DELETE /api/simulation/seed` — full data reset: truncates `InvestigationSummaryView`, engine `CaseInstance` records, `AmlTrustRoutingAttestation` entries, `CaseMemoryStore` entries, related `WorkItemEntity` records, and ledger entries for seeded cases. This intentionally breaks Merkle chain integrity for the deleted entries — acceptable because simulation mode is mutually exclusive with production (see below).
 
 ### Live Simulation
 

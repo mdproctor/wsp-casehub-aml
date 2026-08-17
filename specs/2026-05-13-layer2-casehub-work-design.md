@@ -9,7 +9,7 @@
 
 ## Context
 
-Layer 1 established a naive Java baseline with no accountability, no deadline tracking, and no audit trail. Four `LAYER 1 GAP` comments mark the missing capabilities. Layer 2 closes the deadline-tracking gap: after the SAR narrative is drafted, a compliance officer must review and file it within 30 days (FinCEN requirement). Layer 2 introduces `casehub-work` to create a formal `WorkItem` representing that review obligation.
+Layer 1 established a naive Java baseline with no accountability, no deadline tracking, and no audit trail. Four `LAYER 1 GAP` comments mark the missing capabilities. Layer 2 closes the deadline-tracking gap: after the SAR narrative is drafted, a compliance officer must review and file it within 30 days (FinCEN requirement). Layer 2 introduces `casehub-work` to create a formal `WorkItemEntity` representing that review obligation.
 
 This is a production-quality implementation. The tutorial is derived from the code, not the other way around.
 
