@@ -113,19 +113,35 @@ Instead, `aml-centre` subscribes to dockWorkbench left-panel activation events a
 | **My Tasks** | `worker-task` | `blocks-worker-task-pane` with specialist workspace |
 | **Work Queue** | `work-item` | `blocks-work-item-workbench` with work item detail |
 
-This mirrors the existing `aml-app.ts` pattern (`_renderActiveView()` switching on `ViewId`) adapted for the dockWorkbench architecture. The centre component internally switches content:
+This mirrors the existing `aml-app.ts` pattern (`_renderActiveView()` switching on `ViewId`) adapted for the dockWorkbench architecture. The centre component listens for `pages-dock-toggle` events — the real Pages dock activation event dispatched with `{ bubbles: true, composed: true }` from dock bar buttons (`pages-runtime/src/activation.ts` line 147). Because the centre panel is a sibling of the dock bar (not an ancestor), it listens on `document` and filters by left dock panel IDs:
 
 ```typescript
+const LEFT_DOCK_PANELS = new Set(['aml-investigation-nav', 'aml-worker-nav', 'aml-work-queue-nav']);
+const PANEL_TO_MODE: Record<string, string> = {
+  'aml-investigation-nav': 'investigations',
+  'aml-worker-nav': 'worker-tasks',
+  'aml-work-queue-nav': 'work-queue',
+};
+
 @customElement('aml-centre')
 class AmlCentre extends LitElement {
   @state() private _activeDock = 'investigations';
 
+  private _onDockToggle = (e: Event) => {
+    const { panelId, visible } = (e as CustomEvent<{ panelId: string; visible: boolean }>).detail;
+    if (visible && LEFT_DOCK_PANELS.has(panelId)) {
+      this._activeDock = PANEL_TO_MODE[panelId] ?? 'investigations';
+    }
+  };
+
   override connectedCallback() {
     super.connectedCallback();
-    // Subscribe to dockWorkbench left-panel activation events
-    this.addEventListener('dock-panel-activated', (e: CustomEvent) => {
-      this._activeDock = e.detail.key;
-    });
+    document.addEventListener('pages-dock-toggle', this._onDockToggle);
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    document.removeEventListener('pages-dock-toggle', this._onDockToggle);
   }
 
   override render() {
@@ -156,7 +172,7 @@ The dockWorkbench migration replaces the current `#investigations`/`#compliance`
 
 ### Right dock — Contextual panels
 
-Contextual information driven by the centre's current selection. All panels update when the selected investigation changes:
+Contextual information driven by the active investigation. All panels subscribe to a shared `investigation-context` selection topic (not the mode-specific `case`/`worker-task`/`work-item` topics) and update when the caseId changes:
 
 | Panel | blocks-ui component | Data source |
 |-------|-------------------|-------------|
@@ -164,6 +180,18 @@ Contextual information driven by the centre's current selection. All panels upda
 | **Compliance** | `blocks-compliance-summary` | `/api/investigations/{caseId}/compliance-evidence` |
 | **Audit** | `blocks-audit-trail-viewer` | `/api/investigations/{caseId}/audit-trail` |
 | **Routing** | `blocks-trust-workbench` + `blocks-routing-rationale` | `/api/investigations/{caseId}/routing` + `/api/metrics/trust-scores` |
+
+#### caseId derivation across modes
+
+All three centre modes publish to `investigation-context` when they determine a caseId:
+
+| Centre mode | caseId source | When published |
+|-------------|---------------|----------------|
+| **Investigations** | Directly from `case` selection topic | On row selection |
+| **My Tasks** | `WorkerTaskResponse.caseId` | On task selection |
+| **Work Queue** | Parsed from `callerRef` (via `case:(.+)/gate:.+` or `aml:investigation:(.+)`) | On work item selection |
+
+The `aml-centre` component emits a `pages-selection` event on the `investigation-context` topic whenever any of its sub-views resolves a caseId. Right dock panels listen on `investigation-context` — they work regardless of which left dock panel is active.
 
 ### Bottom dock — Operations
 
@@ -199,7 +227,7 @@ Components marked ✓ exist in `.casehub-packages` today. Components marked ✦ 
 | `blocks-sla-indicator` | ✓ | Bottom dock (Operations) | SLA countdown, breach policy |
 | `blocks-approval-gate` | ✓ | Bottom dock (Operations) | Gate activity summary |
 | `blocks-timeline` | ✓ | Centre (Overview tab) | Chronological event timeline |
-| `casehub-diagram` | ✦ | Centre (Flow Diagram tab) | Investigation DAG with `graph-stencil-case` stencils and runtime overlay. Package exists as `casehub-diagram` (not `casehub-diagram`). |
+| `casehub-diagram` | ✦ | Centre (Flow Diagram tab) | Investigation DAG with `graph-stencil-case` stencils and runtime overlay. Package exists as `casehub-diagram` (not `blocks-diagram-workbench` as in the original spec). |
 | `blocks-channel-feed` | ✦ | Centre (Worker workspace) | Qhorus COMMAND/RESPONSE message feed. Package `channel-activity` provides `blocks-channel-feed`, `blocks-channel-message`, etc. |
 | `blocks-kpi-metric-row` | ✦ | Bottom dock (Operations) | Package `kpi-metric-row` exists but needs `@customElement` registration — cross-repo work item |
 
@@ -394,7 +422,6 @@ Edges use **integer indices** into the nodes list (not string IDs). `parallelGro
 2. **`InvestigationFlowResponse` addition:** Add `adaptiveDecisions` list to show which adaptive bindings fired during the investigation. Each entry: `{ trigger: string, condition: string, fired: boolean, timestamp: Instant }`. This enables the "PEP detected → senior-analyst-required" highlights in the flow diagram.
 
 These are additive changes to the existing Java records — no breaking changes to the existing frontend consumers.
-```
 
 ### Rendering
 
@@ -611,7 +638,7 @@ investigationEvents.onMessage((event) => {
 
 ### Event payload schemas
 
-Each SSE event carries a full state snapshot (not a delta). This simplifies client-side handling — the consumer replaces the current state for the relevant entity rather than applying incremental patches.
+Each SSE event carries the complete set of mutable fields for the entity (not an incremental delta). Immutable fields established at creation (e.g., `transactionId`, `originAccount`, `amount`) are not repeated in events — only fields that change post-creation (`status`, `outcomeType`, `riskScore`) are included. The consumer merges the event's mutable fields into the entity it already holds from the initial list fetch.
 
 ```typescript
 interface InvestigationStatusEvent {
@@ -682,9 +709,10 @@ The `GET /api/investigations` list endpoint reads from this table.
 **riskScore persistence gap:** The TypeScript `InvestigationSummaryResponse` includes `riskScore` and the investigation list renders a Risk column, but `InvestigationSummaryView` has no `riskScore` field and the Java `InvestigationSummaryResponse` record does not include it. To close this gap:
 
 1. Add `riskScore` (Double, nullable) to `InvestigationSummaryView`
-2. In `InvestigationSummaryObserver`, capture `TriageResult.riskScore()` from the triage context when creating the summary view entry
+2. Add `updateRiskScore(UUID caseId, double riskScore)` to `InvestigationSummaryService`
 3. Add `riskScore` to the Java `InvestigationSummaryResponse` record and `toResponse()` mapping
-4. This keeps the CQRS pattern — risk score is captured at triage time, not computed at query time
+
+**Capture timing:** riskScore cannot be captured at summary creation time — `summaryService.createSummary()` runs synchronously in `AmlEngineCoordinator.startInvestigation()` (line 74) before the engine dispatches workers. The triage worker produces `TriageResult.riskScore()` asynchronously. The capture point is the triage worker's completion path: `InvestigationTriageWorker` already writes `riskScore` to the engine context (line 37). A new observer on triage worker completion (analogous to how `InvestigationSummaryObserver` captures `outcomeType` on case completion) calls `summaryService.updateRiskScore()` to persist the score. The summary row exists by this point because it was created before `startCase()` returned.
 
 ### Existing endpoints (no changes needed)
 
@@ -754,11 +782,9 @@ interface WorkerTaskResponse {
   taskId: string;
   capabilityTag: string;
   caseId: string;
-  transactionId: string;
-  flagReason: string;
-  riskScore: number;
   dispatchedAt: string;
   commandParams: Record<string, unknown>;
+  investigationSummary: InvestigationSummaryResponse;
 }
 
 /**
