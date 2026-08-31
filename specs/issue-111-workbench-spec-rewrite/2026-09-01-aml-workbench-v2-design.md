@@ -101,15 +101,45 @@ Three switchable navigation panels that feed the centre split-workbench:
 
 The left dock uses `exclusive: true` — only one nav panel is visible at a time.
 
-### Centre — Split workbench
+### Centre — Topic-switching workbench
 
-`blocks-split-workbench` with `selection-topic` driven by the active left nav panel. The centre listens to all three selection topics and renders the appropriate detail view:
+The centre panel is an AML-specific component (`aml-centre`) registered via `hostPanel`. It does **not** use a single `blocks-split-workbench` listening to multiple topics — `blocks-split-workbench` accepts only one `selection-topic` at a time.
 
-- **`case` selection** → investigation detail with tabs (Overview, Flow Diagram, Findings, Compliance, Audit, Routing)
-- **`worker-task` selection** → specialist workspace (task context + response form)
-- **`work-item` selection** → work item detail (claim, approve, reject, delegate)
+Instead, `aml-centre` subscribes to dockWorkbench left-panel activation events and dynamically renders the appropriate content:
 
-The left half of the split-workbench mirrors the left dock's list as a compact inline list (for when the left dock is collapsed). The right half renders the detail.
+| Active left dock | Selection topic | Centre renders |
+|-----------------|-----------------|----------------|
+| **Investigations** | `case` | `blocks-split-workbench` with investigation list + detail tabs (Overview, Flow Diagram, Findings, Compliance, Audit, Routing) |
+| **My Tasks** | `worker-task` | `blocks-worker-task-pane` with specialist workspace |
+| **Work Queue** | `work-item` | `blocks-work-item-workbench` with work item detail |
+
+This mirrors the existing `aml-app.ts` pattern (`_renderActiveView()` switching on `ViewId`) adapted for the dockWorkbench architecture. The centre component internally switches content:
+
+```typescript
+@customElement('aml-centre')
+class AmlCentre extends LitElement {
+  @state() private _activeDock = 'investigations';
+
+  override connectedCallback() {
+    super.connectedCallback();
+    // Subscribe to dockWorkbench left-panel activation events
+    this.addEventListener('dock-panel-activated', (e: CustomEvent) => {
+      this._activeDock = e.detail.key;
+    });
+  }
+
+  override render() {
+    switch (this._activeDock) {
+      case 'investigations':
+        return html`<blocks-split-workbench selection-topic="case" ...>...</blocks-split-workbench>`;
+      case 'worker-tasks':
+        return html`<blocks-worker-task-pane ...></blocks-worker-task-pane>`;
+      case 'work-queue':
+        return html`<blocks-work-item-workbench ...></blocks-work-item-workbench>`;
+    }
+  }
+}
+```
 
 #### Cross-view drill-down (callerRef → caseId)
 
@@ -141,8 +171,10 @@ System-wide metrics and scenario automation. Not tied to a specific case.
 
 | Panel | Content |
 |-------|---------|
-| **Operations** | `blocks-kpi-metric-row` (throughput), `blocks-sla-indicator` (SLA health), `blocks-approval-gate` summary (gate activity) |
+| **Operations** | `blocks-kpi-metric-row` (throughput), `blocks-sla-indicator` (SLA health), `blocks-approval-gate` summary (gate activity), `aml-sar-quality-tab` (SAR outcome analysis), intervention metrics |
 | **Scenarios** | `PagesLibraryView` for scenario selection + transport controls |
+
+The Operations panel replaces the existing tabbed `aml-operations-view` (which has 5 tabs: Throughput, Trust Scores, Gates, Intervention, SAR Quality). In the dock layout, these become sections within the Operations panel rather than separate tabs — the dock panel scrolls vertically to show all sections.
 
 ---
 
@@ -150,24 +182,26 @@ System-wide metrics and scenario automation. Not tied to a specific case.
 
 ### blocks-ui components (used directly)
 
-| Component | Where used | Configuration |
-|-----------|-----------|---------------|
-| `blocks-split-workbench` | Centre | `selection-topic` switches by active nav |
-| `blocks-list-pane` | Left dock (Investigations, Worker Tasks) | Column configs, endpoint, selection topic |
-| `blocks-detail-pane` | Centre right half | Tab definitions, selection-driven |
-| `blocks-work-item-inbox` | Left dock (Work Queue) | Endpoint, identity |
-| `blocks-work-item-workbench` | Centre (when work-item selected) | Full work item lifecycle |
-| `blocks-audit-trail-viewer` | Right dock (Audit) | Endpoint, causedByEntryId chain, Merkle verification |
-| `blocks-trust-workbench` | Right dock (Routing) | Trust scores, routing rationale |
-| `blocks-routing-rationale` | Right dock (Routing) | Per-decision routing explanation |
-| `blocks-compliance-summary` | Right dock (Compliance) | Regulation grid with status badges |
-| `blocks-gdpr-erasure-action` | Right dock (Compliance, GDPR sub-tab) | Three-phase erasure form |
-| `blocks-kpi-metric-row` | Bottom dock (Operations) | Throughput, completion rate, in-flight |
-| `blocks-sla-indicator` | Bottom dock (Operations) | SLA countdown, breach policy |
-| `blocks-approval-gate` | Bottom dock (Operations) | Gate activity summary |
-| `blocks-diagram-workbench` | Centre (Flow Diagram tab) | Investigation DAG with runtime overlay |
-| `blocks-timeline` | Centre (Overview tab) | Chronological event timeline (existing — complements the structural DAG in Flow Diagram tab) |
-| `blocks-channel-activity` | Centre (Worker workspace) | Qhorus COMMAND/RESPONSE message feed |
+Components marked ✓ exist in `.casehub-packages` today. Components marked ✦ exist as packages but the spec references an incorrect or not-yet-registered element name.
+
+| Component | Status | Where used | Configuration |
+|-----------|--------|-----------|---------------|
+| `blocks-split-workbench` | ✓ | Centre (investigations mode) | `selection-topic` set by active nav |
+| `blocks-list-pane` | ✓ | Left dock (Investigations, Worker Tasks) | Column configs, endpoint, selection topic |
+| `blocks-detail-pane` | ✓ | Centre right half | Tab definitions, selection-driven |
+| `blocks-work-item-inbox` | ✓ | Left dock (Work Queue) | Endpoint, identity |
+| `blocks-work-item-workbench` | ✓ | Centre (when work-item selected) | Full work item lifecycle |
+| `blocks-audit-trail-viewer` | ✓ | Right dock (Audit) | Endpoint, causedByEntryId chain, Merkle verification |
+| `blocks-trust-workbench` | ✓ | Right dock (Routing) | Trust scores, routing rationale |
+| `blocks-routing-rationale` | ✓ | Right dock (Routing) | Per-decision routing explanation (used internally by trust-workbench) |
+| `blocks-compliance-summary` | ✓ | Right dock (Compliance) | Regulation grid with status badges |
+| `blocks-gdpr-erasure-action` | ✓ | Right dock (Compliance, GDPR sub-tab) | Three-phase erasure form |
+| `blocks-sla-indicator` | ✓ | Bottom dock (Operations) | SLA countdown, breach policy |
+| `blocks-approval-gate` | ✓ | Bottom dock (Operations) | Gate activity summary |
+| `blocks-timeline` | ✓ | Centre (Overview tab) | Chronological event timeline |
+| `casehub-diagram` | ✦ | Centre (Flow Diagram tab) | Investigation DAG with `graph-stencil-case` stencils and runtime overlay. Package exists as `casehub-diagram` (not `casehub-diagram`). |
+| `blocks-channel-feed` | ✦ | Centre (Worker workspace) | Qhorus COMMAND/RESPONSE message feed. Package `channel-activity` provides `blocks-channel-feed`, `blocks-channel-message`, etc. |
+| `blocks-kpi-metric-row` | ✦ | Bottom dock (Operations) | Package `kpi-metric-row` exists but needs `@customElement` registration — cross-repo work item |
 
 ### blocks-ui enhancements needed
 
@@ -276,6 +310,44 @@ registerSpecialistWorkspace('sar-drafting', 'aml-sar-drafting-workspace');
 registerSpecialistWorkspace('senior-analyst', 'aml-senior-analyst-workspace');
 ```
 
+### `blocks-worker-task-pane` SPI contract
+
+The registry is **component-scoped** (not window-global) — each `blocks-worker-task-pane` instance maintains its own workspace registry. This allows multiple CaseHub applications to register specialist workspaces independently.
+
+```typescript
+/**
+ * Context provided to specialist workspace slot elements.
+ * Set as a property on the workspace element when it is instantiated.
+ */
+interface WorkerTaskContext {
+  taskId: string;
+  capabilityTag: string;
+  caseId: string;
+  commandParams: Record<string, unknown>;
+  investigationSummary: InvestigationSummaryResponse;
+}
+
+/**
+ * Event emitted by workspace slot elements to submit structured results.
+ * The generic response form listens for this to populate result fields.
+ */
+interface WorkspaceResultEvent extends CustomEvent {
+  detail: {
+    fields: Record<string, unknown>;   // specialist-specific structured result
+    confidence: number;                 // 0.0 to 1.0
+  };
+}
+
+/**
+ * Properties set on the workspace slot element by blocks-worker-task-pane.
+ */
+interface SpecialistWorkspaceElement extends HTMLElement {
+  taskContext: WorkerTaskContext;       // set by parent when task is selected
+}
+```
+
+The `blocks-worker-task-pane` sets `taskContext` on the specialist element when a task is selected. The specialist element emits `workspace-result` events; the generic response form collects the `fields` and `confidence` from the event detail and includes them in the `POST /api/worker-tasks/{taskId}/respond` payload.
+
 ### Response form
 
 Generic form provided by `blocks-worker-task-pane`:
@@ -288,47 +360,45 @@ Submission maps to qhorus RESPONSE/DONE/DECLINE messages via `POST /api/worker-t
 
 ## Investigation Flow Diagram
 
-Replace the old spec's custom iframe graph with `blocks-diagram-workbench`.
+Replace the old spec's custom iframe graph with `casehub-diagram` (from the `casehub-diagram` package) using `graph-stencil-case` stencils for CasePlanModel visualization.
 
 ### Data source
 
-**New API Required:** `GET /api/investigations/{caseId}/flow` — returns the investigation path as a CasePlanModel topology with runtime state.
+`GET /api/investigations/{caseId}/flow` — already exists in `AmlInvestigationQueryResource.getInvestigationFlow()`. Returns the investigation path as a DAG with runtime state.
 
-**Response schema:**
+**Existing response schema** (from `InvestigationFlowResponse.java`):
 ```json
 {
-  "caseDefinitionId": "aml-investigation",
   "nodes": [
     {
-      "id": "entity-resolution",
-      "type": "worker",
       "capabilityTag": "entity-resolution",
-      "selectedWorker": "entity-resolution-agent",
+      "workerId": "entity-resolution-agent",
       "trustScoreAtRouting": 0.85,
       "status": "completed",
-      "startedAt": "2026-09-01T10:00:00Z",
-      "completedAt": "2026-09-01T10:02:00Z"
+      "timestamp": "2026-09-01T10:00:00Z"
     }
   ],
   "edges": [
-    { "from": "entity-resolution", "to": "pattern-analysis" },
-    { "from": "entity-resolution", "to": "osint-screening" }
+    { "from": 0, "to": 1 },
+    { "from": 0, "to": 2 }
   ],
-  "parallelGroups": [["pattern-analysis", "osint-screening"]],
-  "adaptiveDecisions": [
-    {
-      "trigger": "senior-analyst-required",
-      "condition": "entityType == PEP || riskScore > 0.8",
-      "fired": true,
-      "timestamp": "2026-09-01T10:02:05Z"
-    }
-  ]
+  "parallelGroups": [[1, 2]]
 }
+```
+
+Edges use **integer indices** into the nodes list (not string IDs). `parallelGroups` contains lists of node indices scheduled in parallel.
+
+**Schema enhancements needed for v2 diagram:** The existing schema supports the basic DAG visualization. Two enhancements are needed for the v2 runtime overlay and adaptive decision display:
+
+1. **`FlowNode` additions:** Add `startedAt` and `completedAt` timestamps (optional `Instant`) alongside the existing `timestamp` (dispatch time). The diagram overlay needs duration information for completed/in-progress display.
+2. **`InvestigationFlowResponse` addition:** Add `adaptiveDecisions` list to show which adaptive bindings fired during the investigation. Each entry: `{ trigger: string, condition: string, fired: boolean, timestamp: Instant }`. This enables the "PEP detected → senior-analyst-required" highlights in the flow diagram.
+
+These are additive changes to the existing Java records — no breaking changes to the existing frontend consumers.
 ```
 
 ### Rendering
 
-The `blocks-diagram-workbench` renders this as a DAG using `graph-stencil-case` stencils:
+The `casehub-diagram` renders this as a DAG using `graph-stencil-case` stencils:
 - **Worker nodes** — show capability tag, selected worker ID, trust score badge, and runtime status (completed/in-progress/failed/declined)
 - **Parallel groups** — rendered as parallel branches (pattern-analysis and osint-screening side by side)
 - **Adaptive decisions** — highlighted nodes showing which binding fired and why (e.g., "PEP detected → senior-analyst-required")
@@ -336,7 +406,7 @@ The `blocks-diagram-workbench` renders this as a DAG using `graph-stencil-case` 
 
 ### Runtime overlay
 
-`CaseRuntimeState.toDecorations()` maps the flow response to `blocks-diagram-workbench` decorations:
+`CaseRuntimeState.toDecorations()` maps the flow response to `casehub-diagram` decorations:
 - Green badge for completed
 - Blue spinner for in-progress
 - Red badge for failed
@@ -348,6 +418,15 @@ The `blocks-diagram-workbench` renders this as a DAG using `graph-stencil-case` 
 ## Scenario Automation
 
 Replace custom simulation with Pages scenario orchestrator.
+
+### Existing showcase system — migration path
+
+The current webui has a `showcase/` directory with `mock-fetch.ts` (intercepting `/api/*` calls with mock data), `mock-data.ts`, and `element-guard.ts`. This provides a frontend-only demo mode without a running backend.
+
+**Migration plan:**
+1. **During implementation:** The showcase mock system coexists with scenario automation. Scenario automation requires a running backend; showcase mocks do not.
+2. **After scenario automation is complete:** Remove `showcase/` directory. The scenario system fulfills the demo/sales showcase purpose with real backend execution, which is more convincing and eliminates mock/production divergence.
+3. **Development without backend:** Developers can use Quarkus dev mode with `@QuarkusTestResource` for local backend execution. No frontend-only mock mode is needed — the platform is backend-driven.
 
 ### Backend SPI
 
@@ -530,6 +609,49 @@ investigationEvents.onMessage((event) => {
 });
 ```
 
+### Event payload schemas
+
+Each SSE event carries a full state snapshot (not a delta). This simplifies client-side handling — the consumer replaces the current state for the relevant entity rather than applying incremental patches.
+
+```typescript
+interface InvestigationStatusEvent {
+  caseId: string;
+  status: string;        // IN_PROGRESS | COMPLETED | FAILED | CANCELLED | SUSPENDED
+  outcomeType: string | null;
+  updatedAt: string;     // ISO 8601
+}
+
+interface WorkItemStatusEvent {
+  workItemId: string;
+  status: string;        // PENDING | ASSIGNED | IN_PROGRESS | COMPLETED | EXPIRED
+  caseId: string | null; // from callerRef parsing, if applicable
+  updatedAt: string;
+}
+
+interface TrustScoreUpdateEvent {
+  agentId: string;
+  capabilityTag: string;
+  score: number;
+  updatedAt: string;
+}
+
+interface GateDecisionEvent {
+  workItemId: string;
+  actionType: string;
+  decision: string;      // APPROVED | REJECTED | EXPIRED
+  decidedBy: string | null;
+  decidedAt: string;
+}
+
+interface WorkerTaskEvent {
+  taskId: string;
+  capabilityTag: string;
+  caseId: string;
+  status: string;        // DISPATCHED | CLAIMED | COMPLETED | DECLINED
+  updatedAt: string;
+}
+```
+
 blocks-ui components that need enhancement for push support:
 - `blocks-list-pane` — accept an `EventConnection` and merge incoming events into the displayed data
 - `blocks-work-item-inbox` — accept an `EventConnection` for new work item notifications
@@ -541,11 +663,13 @@ blocks-ui components that need enhancement for push support:
 
 ### Prerequisite code changes
 
-| Change | Where | Why |
-|--------|-------|-----|
-| Add `.scope("casehubio/aml/oversight")` to `ComplianceReviewLifecycle.openReview()` | AML app | Compliance review WorkItems currently have no scope — they won't appear in the work queue's scope filter without this. Tracked as #88. |
+All prerequisites are complete:
 
-### Backend persistence (already implemented)
+| Change | Where | Status |
+|--------|-------|--------|
+| Add `.scope("casehubio/aml/oversight")` to `ComplianceReviewLifecycle.openReview()` | AML app | **Done** — #88 closed, `.scope("casehubio/aml/oversight")` present at line 73 |
+
+### Backend persistence
 
 The `InvestigationSummaryView` CQRS pattern already exists (`io.casehub.aml.query`):
 - `InvestigationSummaryView` — JPA entity with denormalised investigation fields
@@ -553,37 +677,46 @@ The `InvestigationSummaryView` CQRS pattern already exists (`io.casehub.aml.quer
 - `InvestigationSummaryService` — query service with filter/sort/pagination
 - `InvestigationSummaryRepository` — JPA repository
 
-The `GET /api/investigations` list endpoint reads from this table. No new persistence design needed.
+The `GET /api/investigations` list endpoint reads from this table.
+
+**riskScore persistence gap:** The TypeScript `InvestigationSummaryResponse` includes `riskScore` and the investigation list renders a Risk column, but `InvestigationSummaryView` has no `riskScore` field and the Java `InvestigationSummaryResponse` record does not include it. To close this gap:
+
+1. Add `riskScore` (Double, nullable) to `InvestigationSummaryView`
+2. In `InvestigationSummaryObserver`, capture `TriageResult.riskScore()` from the triage context when creating the summary view entry
+3. Add `riskScore` to the Java `InvestigationSummaryResponse` record and `toResponse()` mapping
+4. This keeps the CQRS pattern — risk score is captured at triage time, not computed at query time
 
 ### Existing endpoints (no changes needed)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/layer6/investigations/{caseId}` | GET | Single investigation detail (Layer 6) |
-| `/api/layer9/investigations/{caseId}` | GET | Single investigation detail (Layer 9) |
-| `/api/investigations/{caseId}/compliance-evidence` | GET | Compliance evidence for a case |
-| `/api/investigations/{caseId}/audit-trail` | GET | Audit trail entries for a case |
-| `/api/investigations/{caseId}/prior-context` | GET | Prior entity context |
-| `/api/actors/{actorId}/erasure` | POST | GDPR actor erasure |
-| `/api/entities/{entityId}/erasure` | POST | GDPR entity erasure |
-| `/api/metrics/throughput` | GET | Throughput metrics |
-| `/api/metrics/trust-scores` | GET | Trust score metrics |
-| `/api/metrics/gates` | GET | Gate activity metrics |
-| `/api/metrics/interventions` | GET | Intervention metrics |
+| Endpoint | Method | Purpose | Resource class |
+|----------|--------|---------|----------------|
+| `/api/investigations` | GET | List/search investigations with filters | `AmlInvestigationQueryResource.listInvestigations()` |
+| `/api/investigations/{caseId}/flow` | GET | Investigation path topology for diagram | `AmlInvestigationQueryResource.getInvestigationFlow()` |
+| `/api/investigations/{caseId}/findings` | GET | Structured specialist outcomes | `AmlInvestigationQueryResource.getFindings()` |
+| `/api/investigations/{caseId}/gates` | GET | Gate decisions for a case | `AmlInvestigationQueryResource.getGates()` |
+| `/api/investigations/{caseId}/prior-context` | GET | Prior entity context | `AmlInvestigationQueryResource.getPriorContext()` |
+| `/api/investigations/{caseId}/compliance-evidence` | GET | Compliance evidence for a case | `AmlComplianceResource` |
+| `/api/investigations/{caseId}/audit-trail` | GET | Audit trail entries for a case | `AmlAuditResource` |
+| `/api/layer6/investigations/{caseId}` | GET | Single investigation detail (Layer 6) — includes routing decisions with current-time trust scores | `AmlLayer6Resource.getInvestigation()` |
+| `/api/layer9/investigations/{caseId}` | GET | Single investigation detail (Layer 9) | `AmlLayer9Resource.getInvestigation()` |
+| `/api/layer9/investigations/{caseId}/suspend` | POST | Suspend investigation | `AmlLayer9Resource.suspendInvestigation()` |
+| `/api/layer9/investigations/{caseId}/resume` | POST | Resume investigation | `AmlLayer9Resource.resumeInvestigation()` |
+| `/api/actors/{actorId}/erasure` | POST | GDPR actor erasure | `AmlGdprResource` |
+| `/api/entities/{entityId}/erasure` | POST | GDPR entity erasure | `AmlGdprResource` |
+| `/api/metrics/throughput` | GET | Throughput metrics | `AmlMetricsResource.getThroughputMetrics()` |
+| `/api/metrics/trust-scores` | GET | Trust score metrics | `AmlMetricsResource.getTrustScoreMetrics()` |
+| `/api/metrics/trust-scores/history` | GET | Historical trust score snapshots | `AmlMetricsResource.getTrustScoreHistory()` |
+| `/api/metrics/gates` | GET | Gate activity metrics | `AmlMetricsResource.getGateMetrics()` |
+| `/api/metrics/sar-quality` | GET | SAR quality report | `AmlMetricsResource.getSarQualityMetrics()` |
 
 ### New endpoints required
 
 | Endpoint | Method | Purpose | Response type |
 |----------|--------|---------|--------------|
-| `/api/investigations` | GET | List/search investigations with filters | `PagedResponse<InvestigationSummaryResponse>` |
-| `/api/investigations/{caseId}/flow` | GET | Investigation path topology for diagram | `InvestigationFlowResponse` |
-| `/api/investigations/{caseId}/findings` | GET | Structured specialist outcomes | `InvestigationFindingsResponse` |
-| `/api/investigations/{caseId}/gates` | GET | Gate decisions for a case | `InvestigationGatesResponse` |
-| `/api/investigations/{caseId}/routing` | GET | Routing decisions with trust context | `InvestigationRoutingResponse` |
+| `/api/investigations/{caseId}/routing` | GET | Routing decisions with routing-time trust context (distinct from Layer 6 which returns current-time scores) — adds `alternativesConsidered` and `rationale` | `InvestigationRoutingResponse` |
+| `/api/metrics/interventions` | GET | Intervention metrics — escalations, declines, gate rejections, manual overrides (frontend TypeScript type exists; backend implementation missing) | `InterventionMetrics` |
 | `/api/worker-tasks` | GET | Pending worker tasks by capability | `PagedResponse<WorkerTaskResponse>` |
 | `/api/worker-tasks/{taskId}/respond` | POST | Submit specialist response | `void` |
-| `/api/layer9/investigations/{caseId}/suspend` | POST | Suspend investigation | `void` |
-| `/api/layer9/investigations/{caseId}/resume` | POST | Resume investigation | `void` |
 | `/api/events/investigations` | GET (SSE) | Investigation status change stream | SSE `InvestigationStatusEvent` |
 | `/api/events/work-items` | GET (SSE) | Work item lifecycle stream | SSE `WorkItemStatusEvent` |
 | `/api/events/trust-scores` | GET (SSE) | Trust score update stream | SSE `TrustScoreUpdateEvent` |
@@ -597,6 +730,16 @@ The `GET /api/investigations` list endpoint reads from this table. No new persis
 ### New response types
 
 ```typescript
+/**
+ * Routing decisions with routing-time context.
+ *
+ * Distinct from Layer6InvestigationResponse.routingDecisions which returns
+ * current-time trust scores from TrustScoreSource. This endpoint captures
+ * the trust score at the moment of routing, plus alternatives and rationale
+ * that are not available from the Layer 6 endpoint.
+ *
+ * Data source: AmlWorkerDecisionRepository entries joined with routing context.
+ */
 interface InvestigationRoutingResponse {
   decisions: {
     capabilityTag: string;
@@ -617,17 +760,41 @@ interface WorkerTaskResponse {
   dispatchedAt: string;
   commandParams: Record<string, unknown>;
 }
+
+/**
+ * Intervention metrics — already defined in frontend types.ts but
+ * backend implementation in AmlMetricsResource is missing.
+ * Must be implemented to match existing frontend contract.
+ */
+interface InterventionMetrics {
+  escalationCount: number;
+  manualOverrideCount: number;
+  declineRoutingCount: number;
+  gateRejectionCount: number;
+  averageResponseTimeSeconds: number;
+  recentInterventions: RecentIntervention[];
+}
+
+interface RecentIntervention {
+  type: string;   // ESCALATION | DECLINE_REROUTE | GATE_REJECTION | MANUAL_OVERRIDE
+  caseId: string;
+  reason: string;
+  actor: string;
+  occurredAt: string;
+}
 ```
 
-### Foundation endpoints (file issues in shared repos)
+### Foundation endpoints (shared repos — all implemented)
+
+All foundation endpoint issues are closed and implemented:
 
 | Endpoint | Repo | Issue | Status |
 |----------|------|-------|--------|
-| `GET /api/work-items` (query) | casehub-work | work#241 | Existing issue |
-| `POST /api/work-items/{id}/escalate` | casehub-work | work#284 | Existing issue |
-| `POST /api/work-items/{id}/complete` | casehub-work | work#284 | Existing issue |
-| `GET /api/ledger/entries?subjectId={id}` | casehub-ledger | ledger#162 | Existing issue |
-| `GET /api/ledger/entries/{id}/proof` | casehub-ledger | ledger#162 | Existing issue |
+| `GET /api/work-items` (query) | casehub-work | work#241 | **Closed** — implemented |
+| `POST /api/work-items/{id}/escalate` | casehub-work | work#284 | **Closed** — implemented |
+| `POST /api/work-items/{id}/complete` | casehub-work | work#284 | **Closed** — implemented |
+| `GET /api/ledger/entries?subjectId={id}` | casehub-ledger | ledger#162 | **Closed** — implemented |
+| `GET /api/ledger/entries/{id}/proof` | casehub-ledger | ledger#162 | **Closed** — implemented |
 
 ---
 
@@ -677,16 +844,16 @@ app/src/main/webui/src/
 
 ## Cross-Repo Work Required
 
-| Repo | Work | Type |
-|------|------|------|
-| **blocks-ui** | New `blocks-worker-task-pane` component | New component |
-| **blocks-ui** | Push update support on `list-pane`, `work-item-inbox`, `kpi-metric-row` | Enhancement |
-| **blocks-ui** | Specialist workspace registry in `worker-task-pane` | New SPI |
-| **casehub-pages** | Verify `EventConnection` works with blocks-ui component refresh | Verification |
-| **casehub-aml** | `ComplianceReviewLifecycle.openReview()` — add `.scope("casehubio/aml/oversight")` (#88) | Prerequisite |
-| **casehub-work** | `GET /api/work-items` query endpoint (work#241) | New endpoint |
-| **casehub-work** | WorkItem escalate + complete endpoints (work#284) | New endpoint |
-| **casehub-ledger** | Ledger entry query + proof endpoints (ledger#162) | New endpoint |
+| Repo | Work | Type | Status |
+|------|------|------|--------|
+| **blocks-ui** | New `blocks-worker-task-pane` component with SPI contract | New component | Needed |
+| **blocks-ui** | Push update support on `list-pane`, `work-item-inbox` | Enhancement | Needed |
+| **blocks-ui** | Register `@customElement` for `kpi-metric-row` package (package exists, element not registered) | Enhancement | Needed |
+| **casehub-pages** | Verify `EventConnection` works with blocks-ui component refresh | Verification | Needed |
+| ~~casehub-aml~~ | ~~`ComplianceReviewLifecycle` scope (#88)~~ | ~~Prerequisite~~ | **Done** |
+| ~~casehub-work~~ | ~~`GET /api/work-items` query endpoint (work#241)~~ | ~~New endpoint~~ | **Done** |
+| ~~casehub-work~~ | ~~WorkItem escalate + complete endpoints (work#284)~~ | ~~New endpoint~~ | **Done** |
+| ~~casehub-ledger~~ | ~~Ledger entry query + proof endpoints (ledger#162)~~ | ~~New endpoint~~ | **Done** |
 
 ---
 
@@ -694,15 +861,15 @@ app/src/main/webui/src/
 
 Based on this spec:
 
-| Issue | Action | Reason |
-|-------|--------|--------|
-| **#101** (dual-mode datasets) | **Close** | Scenario orchestrator replaces dual-mode; no custom simulation endpoints |
-| **#89** (WebSocket/SSE) | **Close** | Pages EventConnection covers push updates; spec includes SSE endpoints |
-| **#110** (domain worker workbench) | **Revise** | Rewrite as blocks-ui `worker-task-pane` + AML specialist workspaces |
-| **#111** (epic: workbench UI) | **Revise** | Update epic description to reflect composition-first approach |
-| **#86** (auth/RBAC) | **Keep deferred** | Gate actions API-protected; UI role filtering is follow-up |
-| **#10** (operational tooling) | **Keep** | MCP tools, OTel, PROV-DM — unaffected by UI |
-| **#103–#109** (showcase UX children) | **Close** | Subsumed by this spec's comprehensive redesign |
+| Issue | Current state | Action | Reason |
+|-------|--------------|--------|--------|
+| **#101** (dual-mode datasets) | OPEN | **Close** | Scenario orchestrator replaces dual-mode; no custom simulation endpoints |
+| **#89** (WebSocket/SSE) | OPEN | **Close** | Pages EventConnection covers push updates; spec includes SSE endpoints |
+| **#110** (domain worker workbench) | OPEN | **Revise** | Rewrite as blocks-ui `worker-task-pane` + AML specialist workspaces |
+| **#111** (epic: workbench UI) | OPEN | **Revise** | Update epic description to reflect composition-first approach |
+| **#86** (auth/RBAC) | — | **Keep deferred** | Gate actions API-protected; UI role filtering is follow-up |
+| **#10** (operational tooling) | — | **Keep** | MCP tools, OTel, PROV-DM — unaffected by UI |
+| **#103–#109** (showcase UX children) | All CLOSED | **No action** | Already closed |
 
 ---
 
@@ -726,9 +893,10 @@ Non-gated consequential actions (suspend, resume, escalate) require `aml-complia
 | Concern | Issue | Notes |
 |---------|-------|-------|
 | Authentication and role-based UI access | #86 | `withAccess()` available when needed; gate actions already API-protected |
-| Trust score historical trend persistence | #87 | Current scores only; trend timeseries needs snapshot persistence |
-| Mobile responsiveness | — | Desktop-first operational tool |
-| Internationalisation | — | English-only for initial release |
+| Mobile responsiveness | TBD | Desktop-first operational tool — file issue before implementation |
+| Internationalisation | TBD | English-only for initial release — file issue before implementation |
+
+Note: Trust score historical trend persistence (#87) was previously listed here but is now **implemented** — `AmlMetricsResource` has `GET /api/metrics/trust-scores/history` backed by `TrustScoreSnapshotService`. Issue #87 is closed.
 
 ---
 
@@ -743,7 +911,7 @@ Every requirement from the June 2026 spec mapped to this spec's coverage:
 | §View 2: Case Detail (7 sections) | ✅ | Centre detail tabs + right dock panels |
 | §View 2: Transaction | ✅ | aml-investigation-overview (kept) |
 | §View 2: Prior Context | ✅ | aml-investigation-overview (kept) |
-| §View 2: Investigation Flow | ✅ | blocks-diagram-workbench with runtime overlay |
+| §View 2: Investigation Flow | ✅ | casehub-diagram with runtime overlay |
 | §View 2: Specialist Findings | ✅ | Right dock Findings panel |
 | §View 2: Oversight Gates | ✅ | blocks-approval-gate in Operations dock |
 | §View 2: Compliance Review | ✅ | Right dock Compliance panel + blocks-compliance-summary |
