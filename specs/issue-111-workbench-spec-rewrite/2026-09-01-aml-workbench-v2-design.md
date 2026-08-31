@@ -111,6 +111,19 @@ The left dock uses `exclusive: true` — only one nav panel is visible at a time
 
 The left half of the split-workbench mirrors the left dock's list as a compact inline list (for when the left dock is collapsed). The right half renders the detail.
 
+#### Cross-view drill-down (callerRef → caseId)
+
+When a work-item is selected from the Work Queue, the workbench must extract the linked `caseId` from the WorkItem's `callerRef` and navigate to the investigation detail. Two callerRef formats exist:
+
+- Compliance review WorkItems: `aml:investigation:{caseId}` (from `ComplianceReviewLifecycle.openReview()`)
+- Gate approval WorkItems: `case:{caseId}/gate:{gateId}` (from `GateCallerRef.encode()`)
+
+The centre panel's `work-item` selection handler parses callerRef trying both patterns (`case:(.+)/gate:.+` then `aml:investigation:(.+)`), extracts the caseId, and triggers investigation detail rendering. This is workbench-specific wiring, not a blocks-ui built-in.
+
+#### URL navigation
+
+The dockWorkbench migration replaces the current `#investigations`/`#compliance`/`#operations` hash routing with Pages navigation. Existing bookmark URLs will no longer work — Pages owns the URL model. Deep links to specific investigations are supported via `site.navigate()` with caseId parameters.
+
 ### Right dock — Contextual panels
 
 Contextual information driven by the centre's current selection. All panels update when the selected investigation changes:
@@ -153,7 +166,7 @@ System-wide metrics and scenario automation. Not tied to a specific case.
 | `blocks-sla-indicator` | Bottom dock (Operations) | SLA countdown, breach policy |
 | `blocks-approval-gate` | Bottom dock (Operations) | Gate activity summary |
 | `blocks-diagram-workbench` | Centre (Flow Diagram tab) | Investigation DAG with runtime overlay |
-| `blocks-timeline` | Centre (Overview tab) | Investigation timeline with amlInvestigationTimelineStrategy |
+| `blocks-timeline` | Centre (Overview tab) | Chronological event timeline (existing — complements the structural DAG in Flow Diagram tab) |
 | `blocks-channel-activity` | Centre (Worker workspace) | Qhorus COMMAND/RESPONSE message feed |
 
 ### blocks-ui enhancements needed
@@ -526,6 +539,22 @@ blocks-ui components that need enhancement for push support:
 
 ## Backend API Contracts
 
+### Prerequisite code changes
+
+| Change | Where | Why |
+|--------|-------|-----|
+| Add `.scope("casehubio/aml/oversight")` to `ComplianceReviewLifecycle.openReview()` | AML app | Compliance review WorkItems currently have no scope — they won't appear in the work queue's scope filter without this. Tracked as #88. |
+
+### Backend persistence (already implemented)
+
+The `InvestigationSummaryView` CQRS pattern already exists (`io.casehub.aml.query`):
+- `InvestigationSummaryView` — JPA entity with denormalised investigation fields
+- `InvestigationSummaryObserver` — `CaseLifecycleEvent` observer that updates status; resolves `outcomeType` via `AmlInvestigationOutcomeService` on completion
+- `InvestigationSummaryService` — query service with filter/sort/pagination
+- `InvestigationSummaryRepository` — JPA repository
+
+The `GET /api/investigations` list endpoint reads from this table. No new persistence design needed.
+
 ### Existing endpoints (no changes needed)
 
 | Endpoint | Method | Purpose |
@@ -654,6 +683,7 @@ app/src/main/webui/src/
 | **blocks-ui** | Push update support on `list-pane`, `work-item-inbox`, `kpi-metric-row` | Enhancement |
 | **blocks-ui** | Specialist workspace registry in `worker-task-pane` | New SPI |
 | **casehub-pages** | Verify `EventConnection` works with blocks-ui component refresh | Verification |
+| **casehub-aml** | `ComplianceReviewLifecycle.openReview()` — add `.scope("casehubio/aml/oversight")` (#88) | Prerequisite |
 | **casehub-work** | `GET /api/work-items` query endpoint (work#241) | New endpoint |
 | **casehub-work** | WorkItem escalate + complete endpoints (work#284) | New endpoint |
 | **casehub-ledger** | Ledger entry query + proof endpoints (ledger#162) | New endpoint |
@@ -673,6 +703,21 @@ Based on this spec:
 | **#86** (auth/RBAC) | **Keep deferred** | Gate actions API-protected; UI role filtering is follow-up |
 | **#10** (operational tooling) | **Keep** | MCP tools, OTel, PROV-DM — unaffected by UI |
 | **#103–#109** (showcase UX children) | **Close** | Subsumed by this spec's comprehensive redesign |
+
+---
+
+## Role Model (deferred — #86)
+
+The workbench has a two-tier group model. Auth is deferred but the API layer enforces these groups now:
+
+| Group | Role | Scope |
+|-------|------|-------|
+| `compliance-officers` | Compliance Officer (SAR review) | `ComplianceReviewLifecycle` WorkItems |
+| `aml-compliance` | Compliance Officer (gates) | ACCOUNT_RESTRICTION, TRANSACTION_BLOCKING, ENTITY_LINK_CREATION gates |
+| `aml-mlro` | MLRO | SAR_FILING gate (exclusive) |
+| `aml-senior-compliance` | Senior Compliance Director | LAW_ENFORCEMENT_REFERRAL gate, GDPR erasure |
+
+Non-gated consequential actions (suspend, resume, escalate) require `aml-compliance` or `aml-mlro` at the REST endpoint level. Gate actions are protected by WorkItem `candidateGroup` matching. UI role filtering via `withAccess()` is a follow-up (#86).
 
 ---
 
