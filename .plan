@@ -1,0 +1,9 @@
+# Work Plan — issue-111-workbench-spec-rewrite
+
+## State
+branch: issue-111-workbench-spec-rewrite
+issue-repo: casehubio/aml
+base: main
+
+## Queue
+- [ ] casehubio/aml#111 — epic: AML workbench UI (epic) ← active
