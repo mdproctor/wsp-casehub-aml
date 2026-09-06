@@ -35,3 +35,4 @@
 | [2026-08-11-mdp02-closing-the-gaps.md](2026-08-11-mdp02-closing-the-gaps.md) | 2026-08-11 | Epic audit and gap-close: trust dimensions, compliance escalation, failure handling |
 | [2026-08-16-mdp38-provenance-that-travels.md](2026-08-16-mdp38-provenance-that-travels.md) | 2026-08-16 | W3C PROV-DM export for investigation lineage — mapping model, Awaitility budget-splitting fix, hidden outcome validation bug |
 | [2026-08-20-mdp01-closing-triage-feedback-loop.md](2026-08-20-mdp01-closing-triage-feedback-loop.md) | 2026-08-20 | TRIAGE_OVERRULED attestation — closing the trust feedback loop for overruled SAR decisions |
+| [2026-09-01-mdp01-workbench-v2-composition-over-construction.md](2026-09-01-mdp01-workbench-v2-composition-over-construction.md) | 2026-09-01 | AML workbench spec rewrite — from hand-rolled construction to blocks-ui/pages composition |

@@ -1,18 +1,25 @@
-# Handoff — Verification batch closed (2026-08-10)
+# HANDOFF — casehub-aml
 
-## What this project is
+## Last Session
 
-CaseHub AML — anti-money laundering investigation application. 9 foundation layers complete. Full CBR cycle wired.
+Rewrote the AML workbench spec from scratch. The June 2026 spec designed custom components; pages and blocks-ui have since shipped purpose-built equivalents for nearly everything. The new spec composes from existing components — 16 blocks-ui components used directly, 4 enhancements needed, 5 AML-specific components remain. 10 design decisions captured, standard review (2 rounds) applied. Implementation plan written: 8 batches, 12 tasks. Batch 1 (dockWorkbench layout shell) landed — `layout.ts` + `centre.ts` + `investigation-nav.ts` replace the old sidebar/hash routing.
 
-## This session
+## Immediate Next Step
 
-Closed 4 verification/cleanup issues (#90, #87, #88, #81) — all had existing implementations; verified and closed. Updated workbench UI spec to resolve 4 stale references. casehub-pages DSL verification: static dataset scope at loadSite() time, workbench correctly uses blocks-ui instead.
+Batch 2: right dock panels (audit-trail-viewer, compliance-summary, trust-workbench, findings) + investigation-context topic wiring so selecting an investigation updates all contextual panels.
 
-## Immediate next step
+## Cross-Module
 
-Pick from remaining open issues. Candidates: #122 (Flyway migration consolidation, M/Low), #110 (domain worker workbench), #72 (gate rejection routing — Layer 10), or GDPR cluster (#82, #83, #84).
+- blocks-ui: `worker-task-pane` new component needed before Batch 6 (no issue filed yet)
+- blocks-ui: push update support on `list-pane`, `work-item-inbox` needed before Batch 7 (no issue filed yet)
+
+## Garden Entries Consulted
+
+GE-20260810-cfc53d, GE-20260804-befd45, GE-20260804-84ac70, GE-20260805-e3211c, GE-20260804-24d409, GE-20260814-0d4123, GE-20260804-0959d2, GE-20260822-dd986e, GE-20260804-a89d3b, GE-20260823-211f3e
 
 ## References
 
-- Blog: `blog/2026-08-10-mdp01-the-dsl-you-dont-use.md`
-- Garden: GE-20260810-cfc53d (casehub-pages static dataset scope)
+- `specs/issue-111-workbench-spec-rewrite/2026-09-01-aml-workbench-v2-design.md` — v2 spec
+- `specs/issue-111-workbench-spec-rewrite/decisions.md` — 10 design decisions
+- `plans/2026-09-01-aml-workbench-v2.md` — implementation plan (8 batches)
+- `blog/2026-09-01-mdp01-workbench-v2-composition-over-construction.md` — diary entry
