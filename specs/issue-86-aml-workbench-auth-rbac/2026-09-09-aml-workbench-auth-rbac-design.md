@@ -55,9 +55,12 @@ This activates `SecurityIdentityAugmentor`, which bridges
 `GroupMembershipProvider.groupsOf()` to `SecurityIdentity.getRoles()`.
 `@RolesAllowed` annotations become enforceable.
 
-**Dev/demo profile:** OIDC is not configured in dev/demo profiles. Without
-OIDC config, `@RolesAllowed` annotations are inert — all requests pass
-through. This matches casehub-life's approach (life#40).
+**Dev/demo profile:** Add `quarkus.oidc.enabled=false` to the dev profile
+properties (or `%dev.quarkus.oidc.enabled=false` in `application.properties`).
+This prevents the OIDC extension from failing at startup when no OIDC
+server is configured. With OIDC disabled, `@RolesAllowed` annotations are
+inert — all requests pass through. This matches casehub-life's approach
+(life#40).
 
 ### 2. AmlGroups — Add COMPLIANCE_OFFICERS
 
