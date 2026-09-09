@@ -13,3 +13,11 @@ flyway-next-v: none
 
 ## Queue
 - [ ] casehubio/aml#86 — Issue #86 ← active
+  - [ ] Batch 1: Backend Foundation
+    - [ ] Task 1: Add platform-oidc dep + AmlGroups constant + fix group bug
+    - [ ] Task 2: @RolesAllowed on erasure endpoints
+    - [ ] Task 3: @RolesAllowed on suspend/resume endpoints
+  - [ ] Batch 2: Frontend Dock Split
+    - [ ] Task 4: Split compliance dock and wire withAccess
+  - [ ] Batch 3: Platform Docs
+    - [ ] Task 5: Document AML roles in platform auth.md
