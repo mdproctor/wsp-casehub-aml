@@ -2,7 +2,7 @@
 
 ## State
 branch: issue-86-aml-workbench-auth-rbac
-state: active
+state: closing:promoted
 project-sha: 2ef6660135e11d25623ed68b188aaaa89bf40c0f
 date: 2026-09-07
 issue-repo: casehubio/aml
@@ -11,13 +11,6 @@ design-repo: workspace
 design-section-hashes: 4d2cc5ab:## §1 Introduction and Goals|4f6b26ef:## §2 Constraints|39b76cb9:## §3 Context and Scope|74aa736f:## §4 Solution Strategy|9ca8de62:## §5 Building Block View|f1938c56:## §6 Runtime View|65807a21:## §7 Deployment View|a03d508f:## §8 Crosscutting Concepts|b2e1b57c:## §9 Journeys and Chapters|598f3a04:## §10 Architectural Decisions|1f604475:## §11 Quality Requirements|af5f260f:## §12 Risks and Technical Debt|42d51385:## §13 Glossary|faa654d9:## Arc42Stories Self-Assessment
 flyway-next-v: none
 
+evidence-era: true
 ## Queue
-- [ ] casehubio/aml#86 — Issue #86 ← active
-  - [x] Batch 1: Backend Foundation
-    - [x] Task 1: Add platform-oidc dep + AmlGroups constant + fix group bug
-    - [x] Task 2: @RolesAllowed on erasure endpoints
-    - [x] Task 3: @RolesAllowed on suspend/resume endpoints
-  - [x] Batch 2: Frontend Dock Split
-    - [x] Task 4: Split compliance dock and wire withAccess
-  - [x] Batch 3: Platform Docs
-    - [x] Task 5: Document AML roles in platform auth.md
+- [x] casehubio/aml#86 — Issue #86
