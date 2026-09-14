@@ -13,3 +13,10 @@ flyway-next-v: none
 
 ## Queue
 - [ ] casehubio/aml#10 — Issue #10 ← active
+  - [ ] Batch 1: SPI Interfaces
+    - [ ] Task 1: SPI interfaces + response types + platform-mcp dep
+  - [ ] Batch 2: CDI Impls
+    - [ ] Task 2: AmlInvestigationApiImpl
+    - [ ] Task 3: AmlComplianceApiImpl + AmlAuditApiImpl
+  - [ ] Batch 3: Integration
+    - [ ] Task 4: QuarkusTest domain registration verification
