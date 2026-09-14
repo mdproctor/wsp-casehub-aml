@@ -10,11 +10,11 @@ Epic #10 covers operational tooling for AML — MCP tools, OTel, and PROV-DM exp
 PROV-DM is done (#126). OTel is a platform concern (parent#473). What remains is
 registering AML's operational queries in the platform MCP domain catalog.
 
-The platform's agreed cross-platform API strategy (platform#295) uses JAX-RS SPI
-interfaces as the single source of truth. One annotated interface generates REST +
-GraphQL + MCP. `@McpDomain` provides hierarchical, on-demand MCP discovery.
-`@PlatformQuery`/`@PlatformMutation` are deprecated — HTTP verb determines query
-vs mutation.
+The platform's API generation strategy (platform#295, closed) uses `@McpDomain` +
+`@PlatformQuery`/`@PlatformMutation` SPI interfaces as the single source of truth.
+The `GraphQLResolverProcessor` generates REST resources + GraphQL resolvers + MCP
+tools from the interface. `@PathParam` is from `io.casehub.platform.api.mcp` (not
+JAX-RS). `@RestMethod(HttpMethod.DELETE)` overrides the default verb convention.
 
 AML's investigation lifecycle is engine-orchestrated with comprehensive existing
 services. This work wraps those services in SPI interfaces so they're discoverable
@@ -28,17 +28,12 @@ Three interfaces in `api/`, grouped by sub-domain:
 
 ```java
 @McpDomain("aml/investigations")
-@Path("/api/aml/investigations")
 public interface AmlInvestigationApi {
 
-    @GET
-    @Path("/{caseId}")
-    @Description("Investigation status — outcome, specialist findings, gate decisions")
+    @PlatformQuery("Investigation status — outcome, specialist findings, gate decisions")
     InvestigationDetail getInvestigation(@PathParam("caseId") UUID caseId);
 
-    @GET
-    @Path("/stalled")
-    @Description("Investigations with workers past stall threshold")
+    @PlatformQuery("Investigations with workers past stall threshold")
     List<StalledInvestigation> listStalled();
 }
 ```
@@ -47,12 +42,9 @@ public interface AmlInvestigationApi {
 
 ```java
 @McpDomain("aml/compliance")
-@Path("/api/aml/compliance")
 public interface AmlComplianceApi {
 
-    @GET
-    @Path("/sar-pipeline")
-    @Description("SAR pipeline — pending reviews, queue depth, SLA health")
+    @PlatformQuery("SAR pipeline — pending reviews, queue depth, SLA health")
     SarPipelineStatus getSarPipeline();
 }
 ```
@@ -61,18 +53,22 @@ public interface AmlComplianceApi {
 
 ```java
 @McpDomain("aml/audit")
-@Path("/api/aml/audit")
 public interface AmlAuditApi {
 
-    @GET
-    @Path("/{caseId}")
-    @Description("Full causal audit chain with Merkle verification")
+    @PlatformQuery("Full causal audit chain with Merkle verification")
     List<AuditTrailEntry> getAuditTrail(@PathParam("caseId") UUID caseId);
 }
 ```
 
-All operations are `@GET` — query-only. Generates `readOnly` MCP tool hints and
-GraphQL `@Query` operations.
+`@PlatformQuery` determines query semantics — generator produces `@GET` REST +
+GraphQL `@Query` + MCP readOnly tool hint. `@PathParam` is from
+`io.casehub.platform.api.mcp` (not JAX-RS). Typed POJO returns — no `Response`,
+no `Map<String,Object>`.
+
+**Generated output (per interface):**
+- REST resource: `GET /api/aml/investigations/{caseId}`, `GET /api/aml/investigations/stalled`, etc.
+- GraphQL resolver: `@Query` methods with typed returns
+- MCP: domain entry in `casehub_model("aml/investigations")`, dispatchable via `casehub_action`
 
 ## Return Types
 
@@ -193,8 +189,8 @@ public class AmlAuditApiImpl implements AmlAuditApi {
 </dependency>
 ```
 
-`casehub-platform-api` (already a dep of `api/`) provides `@McpDomain` and
-`@Description`.
+`casehub-platform-api` (already a dep of `api/`) provides `@McpDomain`,
+`@PlatformQuery`, `@PathParam`.
 
 ## Hierarchical Discovery
 
@@ -205,17 +201,17 @@ individual named tools.
 
 ## Relationship to Existing REST Endpoints
 
-The new `/api/aml/...` paths coexist alongside existing endpoints:
+The generated `/api/aml/...` paths coexist alongside existing endpoints:
 
-| Existing | New SPI | Notes |
-|----------|---------|-------|
+| Existing | Generated from SPI | Notes |
+|----------|-------------------|-------|
 | `GET /api/layer9/investigations/{id}` | `GET /api/aml/investigations/{id}` | SPI returns typed POJO vs Response |
 | `GET /api/investigations/{id}/audit-trail` | `GET /api/aml/audit/{id}` | Same data, generated surface |
 | (none) | `GET /api/aml/investigations/stalled` | New — wraps InvestigationStallDetector |
 | (none) | `GET /api/aml/compliance/sar-pipeline` | New — aggregated compliance view |
 
 No migration of existing endpoints in this branch. Future consolidation is a
-separate concern tracked under platform#295.
+separate concern.
 
 ## Testing
 
@@ -224,8 +220,8 @@ separate concern tracked under platform#295.
 - **Unit test:** `SarPipelineStatus` assembly — verify WorkItem query logic
 - **`@QuarkusTest`:** Verify `ModelRegistry` contains `aml/investigations`,
   `aml/compliance`, `aml/audit` domains after startup
-- **`@QuarkusTest`:** Verify `casehub_action` dispatch for each operation returns
-  data (via MCP tool manager or REST)
+- **`@QuarkusTest`:** Verify generated REST endpoints return data
+- **`@QuarkusTest`:** Verify `casehub_action` dispatch for each operation
 
 ## What This Does NOT Change
 
@@ -238,9 +234,10 @@ separate concern tracked under platform#295.
 ## References
 
 - `parent/docs/audit/api-generation-audit.md` — platform API strategy
-- `casehubio/platform#295` — MCP/REST/GraphQL generator issue
+- `casehubio/platform#295` — unified API generation (closed)
 - `casehub-platform/mcp-core/` — DomainModel, ModelRegistry, OperationDescriptor
-- `casehub-platform/mcp/` — GraphQLModelScanner, DynamicToolRegistrar
+- `casehub-platform/mcp/` — GraphQLModelScanner, DynamicToolRegistrar, GraphQLResolverProcessor
+- `casehub-platform/platform-api/` — `@McpDomain`, `@PlatformQuery`, `@PathParam`, `@RestMethod`
 - `app/src/main/java/io/casehub/aml/engine/AmlInvestigationOutcomeService.java`
 - `app/src/main/java/io/casehub/aml/compliance/InvestigationStallDetector.java`
 - `app/src/main/java/io/casehub/aml/engine/AmlAuditTrailResource.java`
