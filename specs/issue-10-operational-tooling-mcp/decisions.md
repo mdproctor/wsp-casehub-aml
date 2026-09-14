@@ -1,12 +1,13 @@
-## D1: Registration pattern — platform @McpDomain, not hand-written MCP tools
+## D1: Registration pattern — JAX-RS SPI + @McpDomain (platform#295)
 
-**Choice:** Use the platform MCP pattern: `@McpDomain("aml")` interface in `api/` with `@PlatformQuery` annotations. CDI impl in `app/`. Platform auto-generates `casehub_model`, `casehub_action`, `casehub_activate` tools + MCP resources + GraphQL + REST.
+**Choice:** Use the agreed cross-platform approach: SPI interface in `api/` annotated with `@McpDomain("aml/<sub-domain>")` + standard JAX-RS annotations (`@GET`, `@POST`, `@Path`, `@QueryParam`, `@PathParam`). `@Description` on every method. HTTP verb determines query vs mutation. CDI impl in `app/`. Generator produces REST + GraphQL + MCP from the single interface definition.
 **Alternatives:**
-- Hand-written `@McpServer("aml")` MCP tools — duplicates platform framework, misses catalog, no REST/GraphQL
-- REST-only (no MCP registration) — existing endpoints already serve, but invisible to platform domain catalog
-**Rationale:** Platform pattern gives MCP + REST + GraphQL from one annotated interface with hierarchical discovery and on-demand activation. Near-zero cost, full catalog visibility.
-**Trade-offs:** Depends on `casehub-platform-mcp` SNAPSHOT — AML is an early adopter.
-**Sources:** `casehub-platform/mcp-core/` (DomainModel, ModelRegistry, OperationDescriptor), `casehub-platform/mcp/` (GraphQLModelScanner, DynamicToolRegistrar, CaseHubMcpTools), `platform/boundary-rules.md` §Named MCP server convention
+- `@PlatformQuery`/`@PlatformMutation` — deprecated, do not use
+- Hand-written `@McpServer("aml")` MCP tools — duplicates framework, misses catalog, no REST/GraphQL generation
+- Hand-written REST resources (current AML pattern) — no MCP/GraphQL, not discoverable in domain catalog
+**Rationale:** One SPI interface → three surfaces (REST + GraphQL + MCP). Hierarchical `@McpDomain` labels enable progressive MCP discovery. JAX-RS is already the standard shape language — no new annotation vocabulary needed.
+**Trade-offs:** Depends on `casehub-platform-mcp` SNAPSHOT and generator (platform#295) — AML is an early adopter.
+**Sources:** `parent/docs/audit/api-generation-audit.md`, `casehubio/platform#295`, `casehub-platform/mcp/` (GraphQLModelScanner, DynamicToolRegistrar)
 **Exploration:** quick
 **Status:** captured
 
