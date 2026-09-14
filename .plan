@@ -2,7 +2,7 @@
 
 ## State
 branch: issue-10-operational-tooling-mcp
-state: scaffolded
+state: active
 project-sha: b2bb463b0c53b57802901e796c408c6a794dc937
 date: 2026-09-11
 issue-repo: casehubio/aml
@@ -13,10 +13,10 @@ flyway-next-v: none
 
 ## Queue
 - [ ] casehubio/aml#10 — Issue #10 ← active
-  - [ ] Batch 1: SPI Interfaces
-    - [ ] Task 1: SPI interfaces + response types + platform-mcp dep
-  - [ ] Batch 2: CDI Impls
-    - [ ] Task 2: AmlInvestigationApiImpl
-    - [ ] Task 3: AmlComplianceApiImpl + AmlAuditApiImpl
-  - [ ] Batch 3: Integration
-    - [ ] Task 4: QuarkusTest domain registration verification
+  - [x] Batch 1: SPI Interfaces
+    - [x] Task 1: SPI interfaces + response types + platform-mcp dep
+  - [x] Batch 2: CDI Impls
+    - [x] Task 2: AmlInvestigationApiImpl
+    - [x] Task 3: AmlComplianceApiImpl + AmlAuditApiImpl
+  - [x] Batch 3: Integration
+    - [x] Task 4: QuarkusTest domain registration verification
